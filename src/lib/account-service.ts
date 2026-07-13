@@ -97,9 +97,21 @@ export async function updateAccountProfile(userId: string, input: { firstName: s
 
 export async function updateAccountPassword(userId: string, password: string) {
   if (password.length < 8) throw new Error("Password must contain at least 8 characters.");
+  await writePasswordHash(userId, password);
+}
+
+export async function migrateLegacyPassword(userId: string, password: string) {
+  await writePasswordHash(userId, password);
+}
+
+async function writePasswordHash(userId: string, password: string) {
   const row = (await users()).find((candidate) => get(candidate.record, "User_ID") === userId);
   if (!row) throw new Error("User not found.");
-  await updateCells(row, [{ names: ["Password_Hash", "Password"], value: hashPassword(password) }]);
+  const values = [{ names: ["Password_Hash"], value: hashPassword(password) }];
+  if (row.headers.some((header) => normalized(header) === normalized("Password"))) {
+    values.push({ names: ["Password"], value: "" });
+  }
+  await updateCells(row, values);
 }
 
 export async function updateAccountPhone(userId: string, phone: string) {

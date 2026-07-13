@@ -17,22 +17,52 @@ export function normalizePhone(value: string) {
   return /^0\d{9}$/.test(digits) ? digits : "";
 }
 
+function thailandE164(phone: string) {
+  return `+66${phone.slice(1)}`;
+}
+
+async function sendWithTwilio(phone: string, message: string) {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+  const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+  const fromNumber = process.env.TWILIO_FROM_NUMBER?.trim();
+  if (!accountSid && !authToken && !fromNumber) return false;
+  if (!accountSid || !authToken || !fromNumber) throw new Error("Twilio SMS configuration is incomplete.");
+
+  const body = new URLSearchParams({ To: thailandE164(phone), From: fromNumber, Body: message });
+  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  if (!response.ok) throw new Error("Twilio rejected the OTP request.");
+  return true;
+}
+
 export async function issueOtp(key: string, phone: string) {
   const code = String(randomInt(100000, 1000000));
   otpEntries.set(key, { hash: hash(code), phone, expiresAt: Date.now() + 5 * 60 * 1000, attempts: 0 });
   const webhook = process.env.SMS_WEBHOOK_URL;
+  const message = `รหัส OTP สำหรับ TEMS คือ ${code} (หมดอายุใน 5 นาที)`;
+  let delivered = false;
   if (webhook) {
     const authorization = process.env.SMS_WEBHOOK_AUTH_TOKEN?.trim();
     const response = await fetch(webhook, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(authorization ? { Authorization: `Bearer ${authorization}` } : {}) },
-      body: JSON.stringify({ to: phone, sender: process.env.SMS_SENDER_NAME || "TEMS", message: `รหัส OTP สำหรับ TEMS คือ ${code} (หมดอายุใน 5 นาที)` }),
+      body: JSON.stringify({ to: phone, sender: process.env.SMS_SENDER_NAME || "TEMS", message }),
     });
     if (!response.ok) throw new Error("SMS provider rejected the OTP request.");
-  } else if (process.env.NODE_ENV === "production") {
-    throw new Error("SMS_WEBHOOK_URL is required in production.");
+    delivered = true;
+  } else {
+    delivered = await sendWithTwilio(phone, message);
   }
-  return { code, delivered: Boolean(webhook) };
+  if (!delivered && process.env.NODE_ENV === "production") {
+    throw new Error("An SMS provider is required in production.");
+  }
+  return { code, delivered };
 }
 
 export function consumeOtp(key: string, code: string, phone: string) {

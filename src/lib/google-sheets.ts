@@ -2,7 +2,8 @@ import "server-only";
 
 import { google } from "googleapis";
 import type { SessionUser } from "@/lib/auth-session";
-import { verifyPassword } from "@/lib/password-utils";
+import { migrateLegacyPassword } from "@/lib/account-service";
+import { needsPasswordRehash, verifyPassword } from "@/lib/password-utils";
 
 const mockUsers = [
   {
@@ -209,20 +210,23 @@ export async function authenticateUser(email: string, password: string): Promise
 
   try {
     const users = await getSheetRows("Users");
+    let shouldRehashPassword = false;
     const user = users.find((record) => {
       const loginName = getField(record, "Email", "Username", "User_Name").toLowerCase();
-      const storedPassword = getField(record, "Password", "Password_Hash");
-      const storedPasswordHash = getField(record, "Password_Hash", "Password");
+      const storedPasswordHash = getField(record, "Password_Hash");
+      const legacyPassword = getField(record, "Password");
 
       if (loginName !== normalizedEmail) {
         return false;
       }
 
-      if (storedPassword && verifyPassword(password, storedPassword)) {
+      if (storedPasswordHash && verifyPassword(password, storedPasswordHash)) {
+        shouldRehashPassword = needsPasswordRehash(storedPasswordHash);
         return true;
       }
 
-      if (storedPasswordHash && verifyPassword(password, storedPasswordHash)) {
+      if (legacyPassword && verifyPassword(password, legacyPassword)) {
+        shouldRehashPassword = true;
         return true;
       }
 
@@ -230,8 +234,17 @@ export async function authenticateUser(email: string, password: string): Promise
     });
 
     if (user) {
+      const userId = getField(user, "User_ID", "UserId", "ID");
+      if (shouldRehashPassword) {
+        try {
+          await migrateLegacyPassword(userId, password);
+          sheetRowsCache.delete("sheet:Users");
+        } catch (migrationError) {
+          console.error("Password hash migration failed", migrationError);
+        }
+      }
       return {
-        userId: getField(user, "User_ID", "UserId", "ID"),
+        userId,
         companyId: getField(user, "Company_ID", "CompanyId"),
         email: getField(user, "Email", "Username", "User_Name"),
         role: getRole(getField(user, "Role", "User_Role")),
@@ -243,6 +256,8 @@ export async function authenticateUser(email: string, password: string): Promise
   } catch (error) {
     console.error("Google Sheets authentication failed", error);
   }
+
+  if (process.env.NODE_ENV === "production" || process.env.ALLOW_MOCK_AUTH !== "true") return null;
 
   const mockUser = mockUsers.find(
     (candidate) => candidate.email.toLowerCase() === normalizedEmail && candidate.password === password,
