@@ -1,4 +1,14 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## TEMS
+
+Tactical Equipment Management System for กองพันทหารอากาศโยธิน กองบิน 41.
+
+### Google Sheets setup
+
+1. Copy `.env.local.example` to `.env.local` and add the Google service account values.
+2. Share spreadsheet `1zl-f56i9Dv0kyIc2tLpxc5LhbiRsuClI_n1y9-XqkW8` with `GOOGLE_CLIENT_EMAIL` as a Viewer.
+3. The integration expects the `Users`, `Companies`, `Master_Equipments`, `Inventories`, and `Transactions` sheet tabs and their documented ID/name columns.
+
+Run the app with `npm run dev` on the mapped `X:` drive.
 
 ## Getting Started
 
