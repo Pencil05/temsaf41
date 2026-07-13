@@ -18,7 +18,7 @@ export function CategoryCard({ category }: { category: DashboardCategory }) {
 
   return (
     <Link
-      href={`/user/inventory?category=${encodeURIComponent(category.name)}`}
+      href={`/user/inventory/${encodeURIComponent(category.name)}`}
       className="group rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition duration-200 hover:-translate-y-1 hover:border-blue-200 hover:shadow-[0_14px_30px_rgba(37,99,235,0.14)] focus:outline-none focus:ring-4 focus:ring-blue-100"
     >
       <span className="grid size-10 place-items-center rounded-xl bg-blue-50 text-blue-600 transition group-hover:bg-blue-600 group-hover:text-white">

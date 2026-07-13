@@ -46,6 +46,18 @@ export type UserDashboardData = {
   activities: DashboardActivity[];
 };
 
+export type UserHistoryItem = {
+  id: string;
+  equipmentName: string;
+  quantity: number;
+  ownerCompanyName: string;
+  borrowerCompanyName: string;
+  date: string;
+  dueDate: string;
+  status: string;
+  note: string;
+};
+
 function getGoogleConfiguration() {
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL?.trim();
   const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
@@ -285,7 +297,7 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
       };
     })
     .sort((first, second) => Date.parse(second.date) - Date.parse(first.date))
-    .slice(0, 8);
+    .slice(0, 3);
 
   const categories = Array.from(categoryNames).map((name) => ({
     name,
@@ -297,4 +309,44 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
     categories: categories.sort((a, b) => a.name.localeCompare(b.name, "th")),
     activities,
   };
+}
+
+export async function getUserTransactionHistory(user: SessionUser): Promise<UserHistoryItem[]> {
+  const [companies, rawEquipments, transactions] = await Promise.all([
+    getSheetRows("Companies"),
+    getSheetRows("Equipments"),
+    getSheetRows("Transactions"),
+  ]);
+  const equipments = rawEquipments.length ? rawEquipments : await getSheetRows("Master_Equipments");
+  const companyNames = new Map(companies.map((company) => [
+    getField(company, "Company_ID", "CompanyId", "ID"),
+    getField(company, "Company_Name", "CompanyName", "Name"),
+  ]));
+  const equipmentNames = new Map(equipments.map((equipment) => [
+    getField(equipment, "Equip_ID", "Equipment_ID", "EquipId", "ID"),
+    getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name"),
+  ]));
+
+  return transactions
+    .filter((transaction) =>
+      getField(transaction, "Owner_Company_ID", "OwnerCompanyId") === user.companyId ||
+      getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId") === user.companyId,
+    )
+    .map((transaction, index) => {
+      const equipmentId = getField(transaction, "Equip_ID", "Equipment_ID", "EquipId");
+      const ownerCompanyId = getField(transaction, "Owner_Company_ID", "OwnerCompanyId");
+      const borrowerCompanyId = getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId");
+      return {
+        id: getField(transaction, "Tx_ID", "Transaction_ID", "TransactionId", "ID") || `TX-${index}`,
+        equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์",
+        quantity: getNumber(transaction, "Qty", "Quantity"),
+        ownerCompanyName: companyNames.get(ownerCompanyId) || ownerCompanyId,
+        borrowerCompanyName: companyNames.get(borrowerCompanyId) || borrowerCompanyId,
+        date: getField(transaction, "Borrow_Date", "Transaction_Date", "Date"),
+        dueDate: getField(transaction, "Due_Date", "DueDate"),
+        status: getField(transaction, "Status") || "Unknown",
+        note: getField(transaction, "Note", "Remarks") || "-",
+      };
+    })
+    .sort((first, second) => Date.parse(second.date) - Date.parse(first.date));
 }

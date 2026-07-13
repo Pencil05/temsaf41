@@ -5,7 +5,7 @@ Tactical Equipment Management System for กองพันทหารอาก
 ### Google Sheets setup
 
 1. Copy `.env.local.example` to `.env.local` and add the Google service account values.
-2. Share spreadsheet `1zl-f56i9Dv0kyIc2tLpxc5LhbiRsuClI_n1y9-XqkW8` with `GOOGLE_CLIENT_EMAIL` as a Viewer.
+2. Share spreadsheet `1O7UBSJiPKffZVG6isyTrDD1qUpPtvAQ5ZcUiogIzuf4` with `GOOGLE_CLIENT_EMAIL` as an Editor.
 3. The integration expects the `Users`, `Companies`, `Master_Equipments`, `Inventories`, and `Transactions` sheet tabs and their documented ID/name columns.
 
 Run the app with `npm run dev` on the mapped `X:` drive.

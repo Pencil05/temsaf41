@@ -16,7 +16,7 @@ export default function Home() {
               className="size-full"
             />
           </div>
-          <h1 className="mt-4 text-2xl font-bold tracking-tight text-blue-600 sm:text-2xl">
+          <h1 className="mt-4 text-2xl font-bold tracking-tight  sm:text-2xl text-blue-600">
             กองพันทหารอากาศโยธิน กองบิน 41
           </h1>
         </div>

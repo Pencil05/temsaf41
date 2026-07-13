@@ -1,0 +1,524 @@
+import "server-only";
+
+import { google } from "googleapis";
+import type { SessionUser } from "@/lib/auth-session";
+import { withSheetsMutationLock } from "@/lib/sheets-mutation-lock";
+
+type SheetRecord = Record<string, string>;
+
+type SheetRow = {
+  record: SheetRecord;
+  rowNumber: number;
+};
+
+type SheetTable = {
+  name: string;
+  headers: string[];
+  rows: SheetRow[];
+};
+
+export type BorrowInventoryItem = {
+  inventoryId: string;
+  equipmentId: string;
+  name: string;
+  category: string;
+  available: number;
+  requirePlate: boolean;
+  plateNumber: string;
+};
+
+export type BorrowCompany = {
+  id: string;
+  name: string;
+};
+
+export type BorrowPageData = {
+  ownerCompanyName: string;
+  inventory: BorrowInventoryItem[];
+  companies: BorrowCompany[];
+};
+
+export type CategoryInventoryItem = BorrowInventoryItem & {
+  total: number;
+  broken: number;
+};
+
+export type CategoryInventoryData = {
+  category: string;
+  companyName: string;
+  inventory: CategoryInventoryItem[];
+  companies: BorrowCompany[];
+};
+
+export type BorrowRequestInput = {
+  borrowerCompanyId: string;
+  dueDate?: string;
+  note?: string;
+  evidenceName?: string;
+  items: Array<{ inventoryId: string; quantity: number }>;
+};
+
+export type BorrowReceipt = {
+  txId: string;
+  date: string;
+  borrowerName: string;
+  borrowerCompanyName: string;
+  ownerCompanyName: string;
+  dueDate: string;
+  note: string;
+  items: Array<{ name: string; quantity: number; plateNumber: string }>;
+};
+
+export class BorrowValidationError extends Error {}
+
+function getGoogleConfiguration() {
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL?.trim();
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
+  const spreadsheetId = process.env.SHEET_ID?.trim();
+
+  if (!clientEmail || !privateKey || !spreadsheetId) {
+    throw new Error("Google Sheets environment variables are not configured.");
+  }
+
+  if (!privateKey.includes("-----BEGIN PRIVATE KEY-----")) {
+    throw new Error("GOOGLE_PRIVATE_KEY is not a valid PEM private key.");
+  }
+
+  return { clientEmail, privateKey, spreadsheetId };
+}
+
+async function getSheetsClient() {
+  const { clientEmail, privateKey } = getGoogleConfiguration();
+  const auth = new google.auth.JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+
+  return google.sheets({ version: "v4", auth });
+}
+
+async function getSheetTable(sheetName: string): Promise<SheetTable> {
+  const { spreadsheetId } = getGoogleConfiguration();
+  const sheets = await getSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${sheetName}'!A:ZZ`,
+  });
+  const [rawHeaders = [], ...values] = response.data.values ?? [];
+  const headers = rawHeaders.map((header) => String(header).trim());
+  const rows = values
+    .map((row, index) => ({ row, rowNumber: index + 2 }))
+    .filter(({ row }) => row.some((cell) => cell !== "" && cell !== undefined))
+    .map(({ row, rowNumber }) => ({
+      rowNumber,
+      record: headers.reduce<SheetRecord>((record, header, index) => {
+        if (header) {
+          record[header] = String(row[index] ?? "").trim();
+        }
+        return record;
+      }, {}),
+    }));
+
+  return { name: sheetName, headers, rows };
+}
+
+async function getEquipmentTable() {
+  const equipmentTable = await getSheetTable("Equipments");
+  return equipmentTable.rows.length ? equipmentTable : getSheetTable("Master_Equipments");
+}
+
+function normalizedKey(value: string) {
+  return value.toLowerCase().replace(/[\s_-]/g, "");
+}
+
+function getField(record: SheetRecord, ...fieldNames: string[]) {
+  const key = Object.keys(record).find((candidate) =>
+    fieldNames.some((fieldName) => normalizedKey(candidate) === normalizedKey(fieldName)),
+  );
+  return key ? record[key] : "";
+}
+
+function getNumber(record: SheetRecord, ...fieldNames: string[]) {
+  const value = Number(getField(record, ...fieldNames).replace(/,/g, ""));
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getBoolean(record: SheetRecord, ...fieldNames: string[]) {
+  return ["true", "1", "yes", "y"].includes(getField(record, ...fieldNames).toLowerCase());
+}
+
+function getInventoryKey(row: SheetRow) {
+  return getField(row.record, "Inventory_ID", "InventoryId", "ID") || `row-${row.rowNumber}`;
+}
+
+function getHeaderIndex(headers: string[], ...fieldNames: string[]) {
+  return headers.findIndex((header) =>
+    fieldNames.some((fieldName) => normalizedKey(header) === normalizedKey(fieldName)),
+  );
+}
+
+function columnLetter(index: number) {
+  let value = index + 1;
+  let result = "";
+
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    value = Math.floor((value - 1) / 26);
+  }
+
+  return result;
+}
+
+type RowField = { aliases: string[]; value: string | number };
+
+function buildRow(headers: string[], fields: RowField[]) {
+  return headers.map((header) => {
+    const field = fields.find(({ aliases }) =>
+      aliases.some((alias) => normalizedKey(alias) === normalizedKey(header)),
+    );
+    return field?.value ?? "";
+  });
+}
+
+function nextRowNumber(table: SheetTable) {
+  return Math.max(1, ...table.rows.map((row) => row.rowNumber)) + 1;
+}
+
+function createTxId() {
+  const date = new Date();
+  const day = date.toISOString().slice(0, 10).replace(/-/g, "");
+  const random = crypto.randomUUID().split("-")[0].toUpperCase();
+  return `TX-${day}-${random}`;
+}
+
+export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageData> {
+  const [companiesTable, equipmentTable, inventoriesTable] = await Promise.all([
+    getSheetTable("Companies"),
+    getEquipmentTable(),
+    getSheetTable("Inventories"),
+  ]);
+  const equipmentById = new Map(
+    equipmentTable.rows.map(({ record }) => [
+      getField(record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId", "ID"),
+      record,
+    ]),
+  );
+  const companies = companiesTable.rows
+    .map(({ record }) => ({
+      id: getField(record, "Company_ID", "CompanyId", "ID"),
+      name: getField(record, "Company_Name", "CompanyName", "Name"),
+    }))
+    .filter((company) => company.id && company.name);
+  const inventory = inventoriesTable.rows
+    .filter(({ record }) => getField(record, "Company_ID", "CompanyId") === user.companyId)
+    .map((row) => {
+      const equipmentId = getField(row.record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId");
+      const equipment = equipmentById.get(equipmentId) ?? {};
+
+      return {
+        inventoryId: getInventoryKey(row),
+        equipmentId,
+        name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
+        category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
+        available: getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable"),
+        requirePlate: getBoolean(equipment, "Require_Plate", "RequirePlate"),
+        plateNumber: getField(row.record, "Plate_Number", "PlateNumber"),
+      };
+    })
+    .filter((item) => item.available > 0)
+    .sort((first, second) => first.name.localeCompare(second.name, "th"));
+
+  return {
+    ownerCompanyName: companies.find((company) => company.id === user.companyId)?.name || "หน่วยงานของคุณ",
+    companies: companies.filter((company) => company.id !== user.companyId),
+    inventory,
+  };
+}
+
+export async function getCategoryInventoryData(
+  user: SessionUser,
+  categoryName: string,
+): Promise<CategoryInventoryData> {
+  const [companiesTable, equipmentTable, inventoriesTable] = await Promise.all([
+    getSheetTable("Companies"),
+    getEquipmentTable(),
+    getSheetTable("Inventories"),
+  ]);
+  const companies = companiesTable.rows
+    .map(({ record }) => ({
+      id: getField(record, "Company_ID", "CompanyId", "ID"),
+      name: getField(record, "Company_Name", "CompanyName", "Name"),
+    }))
+    .filter((company) => company.id && company.name);
+  const companyInventoryRows = inventoriesTable.rows.filter(
+    ({ record }) => getField(record, "Company_ID", "CompanyId") === user.companyId,
+  );
+  const inventory = equipmentTable.rows
+    .filter(({ record }) =>
+      normalizedKey(getField(record, "Category", "Category_Name", "Equip_Category")) === normalizedKey(categoryName),
+    )
+    .flatMap(({ record: equipment }) => {
+      const equipmentId = getField(equipment, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId", "ID");
+      const matchingRows = companyInventoryRows.filter(
+        ({ record }) => getField(record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId") === equipmentId,
+      );
+      const rows = matchingRows.length ? matchingRows : [null];
+
+      return rows.map((row) => ({
+        inventoryId: row ? getInventoryKey(row) : `missing:${equipmentId}`,
+        equipmentId,
+        name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
+        category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
+        available: row ? getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") : 0,
+        total: row ? getNumber(row.record, "Qty_Total", "Total_Quantity", "QtyTotal") : 0,
+        broken: row ? getNumber(row.record, "Qty_Broken", "Broken_Quantity", "QtyBroken") : 0,
+        requirePlate: getBoolean(equipment, "Require_Plate", "RequirePlate"),
+        plateNumber: row ? getField(row.record, "Plate_Number", "PlateNumber") : "",
+      }));
+    })
+    .sort((first, second) => first.name.localeCompare(second.name, "th"));
+
+  return {
+    category: categoryName,
+    companyName: companies.find((company) => company.id === user.companyId)?.name || "หน่วยงานของคุณ",
+    companies: companies.filter((company) => company.id !== user.companyId),
+    inventory,
+  };
+}
+
+export async function submitBorrowRequest(user: SessionUser, input: BorrowRequestInput): Promise<BorrowReceipt> {
+  return withSheetsMutationLock(async () => {
+    if (!input.borrowerCompanyId || !input.items.length) {
+      throw new BorrowValidationError("กรุณากรอกข้อมูลการยืมให้ครบถ้วน");
+    }
+
+    const dueDate = input.dueDate
+      ? new Date(input.dueDate)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(dueDate.getTime()) || dueDate.getTime() <= Date.now()) {
+      throw new BorrowValidationError("วันและเวลาส่งคืนต้องอยู่ในอนาคต");
+    }
+
+    if (new Set(input.items.map((item) => item.inventoryId)).size !== input.items.length) {
+      throw new BorrowValidationError("พบรายการยุทโธปกรณ์ซ้ำกัน");
+    }
+
+    const [companiesTable, equipmentTable, inventoriesTable, transactionsTable, auditTable] = await Promise.all([
+      getSheetTable("Companies"),
+      getEquipmentTable(),
+      getSheetTable("Inventories"),
+      getSheetTable("Transactions"),
+      getSheetTable("Audit_Log"),
+    ]);
+    const borrowerCompany = companiesTable.rows.find(
+      ({ record }) => getField(record, "Company_ID", "CompanyId", "ID") === input.borrowerCompanyId,
+    );
+    if (!borrowerCompany) {
+      throw new BorrowValidationError("ไม่พบหน่วยงานผู้ยืมที่เลือก");
+    }
+    if (input.borrowerCompanyId === user.companyId) {
+      throw new BorrowValidationError("หน่วยต้นทางและหน่วยปลายทางต้องไม่ใช่หน่วยเดียวกัน");
+    }
+
+    const companyNameById = new Map(
+      companiesTable.rows.map(({ record }) => [
+        getField(record, "Company_ID", "CompanyId", "ID"),
+        getField(record, "Company_Name", "CompanyName", "Name"),
+      ]),
+    );
+    const equipmentById = new Map(
+      equipmentTable.rows.map(({ record }) => [
+        getField(record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId", "ID"),
+        record,
+      ]),
+    );
+    const requestedRows = input.items.map((requestItem) => {
+      const inventoryRow = inventoriesTable.rows.find((row) => getInventoryKey(row) === requestItem.inventoryId);
+
+      if (!inventoryRow || getField(inventoryRow.record, "Company_ID", "CompanyId") !== user.companyId) {
+        throw new BorrowValidationError("ไม่พบยุทโธปกรณ์ที่เลือกในคลังของคุณ");
+      }
+
+      const equipmentId = getField(inventoryRow.record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId");
+      const equipment = equipmentById.get(equipmentId) ?? {};
+      const available = getNumber(inventoryRow.record, "Qty_Available", "Available_Quantity", "QtyAvailable");
+      const borrowed = getNumber(inventoryRow.record, "Qty_Borrowed", "Borrowed_Quantity", "QtyBorrowed");
+      const total = getNumber(inventoryRow.record, "Qty_Total", "Total_Quantity", "QtyTotal");
+      const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
+      const quantity = requirePlate ? 1 : Math.floor(Number(requestItem.quantity));
+      const plateNumber = getField(inventoryRow.record, "Plate_Number", "PlateNumber");
+      const destinationInventory = inventoriesTable.rows.find(({ record }) =>
+        getField(record, "Company_ID", "CompanyId") === input.borrowerCompanyId &&
+        getField(record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId") === equipmentId &&
+        (!plateNumber || getField(record, "Plate_Number", "PlateNumber") === plateNumber),
+      );
+
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > available) {
+        throw new BorrowValidationError(
+          `${getField(equipment, "Equip_Name", "Equipment_Name", "Name") || "รายการที่เลือก"} มีจำนวนคงเหลือไม่เพียงพอ`,
+        );
+      }
+
+      return {
+        inventoryRow,
+        equipmentId,
+        name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
+        plateNumber,
+        available,
+        borrowed,
+        total,
+        quantity,
+        destinationInventory,
+        destinationInventoryId: destinationInventory
+          ? getInventoryKey(destinationInventory)
+          : `INV-${crypto.randomUUID()}`,
+        destinationAvailable: destinationInventory
+          ? getNumber(destinationInventory.record, "Qty_Available", "Available_Quantity", "QtyAvailable")
+          : 0,
+        destinationTotal: destinationInventory
+          ? getNumber(destinationInventory.record, "Qty_Total", "Total_Quantity", "QtyTotal")
+          : 0,
+      };
+    });
+
+    const availableColumn = getHeaderIndex(
+      inventoriesTable.headers,
+      "Qty_Available",
+      "Available_Quantity",
+      "QtyAvailable",
+    );
+    const borrowedColumn = getHeaderIndex(
+      inventoriesTable.headers,
+      "Qty_Borrowed",
+      "Borrowed_Quantity",
+      "QtyBorrowed",
+    );
+    const totalColumn = getHeaderIndex(inventoriesTable.headers, "Qty_Total", "Total_Quantity", "QtyTotal");
+    if (availableColumn < 0 || borrowedColumn < 0 || totalColumn < 0) {
+      throw new Error("Inventories sheet must contain Qty_Total, Qty_Available and Qty_Borrowed columns.");
+    }
+    if (!transactionsTable.headers.length || !auditTable.headers.length) {
+      throw new Error("Transactions and Audit_Log sheets must contain a header row.");
+    }
+
+    const now = new Date();
+    const txId = createTxId();
+    const transactionStartRow = nextRowNumber(transactionsTable);
+    const auditRowNumber = nextRowNumber(auditTable);
+    const transactionRows = requestedRows.map((item, index) =>
+      buildRow(transactionsTable.headers, [
+        { aliases: ["Tx_ID", "Transaction_ID", "TransactionId", "ID"], value: `${txId}-${index + 1}` },
+        { aliases: ["Group_Tx_ID", "Borrow_Batch_ID"], value: txId },
+        { aliases: ["Owner_Company_ID", "OwnerCompanyId"], value: user.companyId },
+        { aliases: ["Borrower_Company_ID", "BorrowerCompanyId"], value: input.borrowerCompanyId },
+        { aliases: ["User_ID", "UserId"], value: user.userId },
+        { aliases: ["Inventory_ID", "InventoryId"], value: getInventoryKey(item.inventoryRow) },
+        { aliases: ["Destination_Inventory_ID", "Borrower_Inventory_ID"], value: item.destinationInventoryId },
+        { aliases: ["Equip_ID", "Equipment_ID", "EquipId", "EquipmentId"], value: item.equipmentId },
+        { aliases: ["Plate_Number", "PlateNumber"], value: item.plateNumber },
+        { aliases: ["Qty", "Quantity"], value: item.quantity },
+        { aliases: ["Borrow_Date", "Transaction_Date", "Date"], value: now.toISOString() },
+        { aliases: ["Due_Date", "DueDate"], value: dueDate.toISOString() },
+        { aliases: ["Status"], value: "Borrowed" },
+        { aliases: ["Note", "Remarks"], value: input.note?.trim() || "" },
+        { aliases: ["Evidence", "Evidence_File", "Evidence_File_Name"], value: input.evidenceName || "" },
+      ]),
+    );
+    const auditRow = buildRow(auditTable.headers, [
+      { aliases: ["Audit_ID", "AuditId", "ID"], value: `AUD-${crypto.randomUUID()}` },
+      { aliases: ["Timestamp", "Created_At", "Date"], value: now.toISOString() },
+      { aliases: ["User_ID", "UserId"], value: user.userId },
+      { aliases: ["Action_Type", "Action"], value: "BORROW" },
+      { aliases: ["Table_Name", "Target_Table"], value: "Transactions" },
+      { aliases: ["Record_ID", "Tx_ID", "Transaction_ID"], value: txId },
+      {
+        aliases: ["Details", "Description", "Note"],
+        value: `Borrowed ${requestedRows.length} item(s) for company ${input.borrowerCompanyId}`,
+      },
+    ]);
+    let nextInventoryRow = nextRowNumber(inventoriesTable);
+    const updates: Array<{ range: string; values: Array<Array<string | number>> }> = requestedRows.flatMap((item) => {
+      const itemUpdates: Array<{ range: string; values: Array<Array<string | number>> }> = [
+        {
+          range: `'Inventories'!${columnLetter(totalColumn)}${item.inventoryRow.rowNumber}`,
+          values: [[Math.max(0, item.total - item.quantity)]],
+        },
+        {
+          range: `'Inventories'!${columnLetter(availableColumn)}${item.inventoryRow.rowNumber}`,
+          values: [[item.available - item.quantity]],
+        },
+        {
+          range: `'Inventories'!${columnLetter(borrowedColumn)}${item.inventoryRow.rowNumber}`,
+          values: [[item.borrowed + item.quantity]],
+        },
+      ];
+
+      if (item.destinationInventory) {
+        itemUpdates.push(
+          {
+            range: `'Inventories'!${columnLetter(totalColumn)}${item.destinationInventory.rowNumber}`,
+            values: [[item.destinationTotal + item.quantity]],
+          },
+          {
+            range: `'Inventories'!${columnLetter(availableColumn)}${item.destinationInventory.rowNumber}`,
+            values: [[item.destinationAvailable + item.quantity]],
+          },
+        );
+      } else {
+        const rowNumber = nextInventoryRow++;
+        itemUpdates.push({
+          range: `'Inventories'!A${rowNumber}:${columnLetter(inventoriesTable.headers.length - 1)}${rowNumber}`,
+          values: [buildRow(inventoriesTable.headers, [
+            { aliases: ["Inventory_ID", "InventoryId", "ID"], value: item.destinationInventoryId },
+            { aliases: ["Company_ID", "CompanyId"], value: input.borrowerCompanyId },
+            { aliases: ["Equip_ID", "Equipment_ID", "EquipId", "EquipmentId"], value: item.equipmentId },
+            { aliases: ["Plate_Number", "PlateNumber"], value: item.plateNumber },
+            { aliases: ["Qty_Total", "Total_Quantity", "QtyTotal"], value: item.quantity },
+            { aliases: ["Qty_Available", "Available_Quantity", "QtyAvailable"], value: item.quantity },
+            { aliases: ["Qty_Borrowed", "Borrowed_Quantity", "QtyBorrowed"], value: 0 },
+            { aliases: ["Qty_Broken", "Broken_Quantity", "QtyBroken"], value: 0 },
+          ])],
+        });
+      }
+
+      return itemUpdates;
+    });
+    updates.push(
+      {
+        range: `'Transactions'!A${transactionStartRow}:${columnLetter(transactionsTable.headers.length - 1)}${
+          transactionStartRow + transactionRows.length - 1
+        }`,
+        values: transactionRows,
+      },
+      {
+        range: `'Audit_Log'!A${auditRowNumber}:${columnLetter(auditTable.headers.length - 1)}${auditRowNumber}`,
+        values: [auditRow],
+      },
+    );
+
+    const { spreadsheetId } = getGoogleConfiguration();
+    const sheets = await getSheetsClient();
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: "RAW", data: updates },
+    });
+
+    return {
+      txId,
+      date: now.toISOString(),
+      borrowerName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+      borrowerCompanyName:
+        getField(borrowerCompany.record, "Company_Name", "CompanyName", "Name") || input.borrowerCompanyId,
+      ownerCompanyName: companyNameById.get(user.companyId) || user.companyId,
+      dueDate: dueDate.toISOString(),
+      note: input.note?.trim() || "-",
+      items: requestedRows.map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        plateNumber: item.plateNumber,
+      })),
+    };
+  });
+}
