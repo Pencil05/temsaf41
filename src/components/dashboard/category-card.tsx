@@ -1,28 +1,23 @@
 import Link from "next/link";
-import { Boxes, Crosshair, Package, Shield, Truck } from "lucide-react";
+import { Boxes, Crosshair, Shield, Truck } from "lucide-react";
 import type { DashboardCategory } from "@/lib/google-sheets";
 
-const categoryIcons = [
-  { keywords: ["อาวุธ", "weapon"], Icon: Crosshair },
-  { keywords: ["ยานพาหนะ", "vehicle"], Icon: Truck },
-  { keywords: ["สรรพาวุธ", "ammunition"], Icon: Shield },
-];
-
-function getCategoryIcon(categoryName: string) {
+function CategoryIcon({ categoryName }: { categoryName: string }) {
   const category = categoryName.toLowerCase();
-  return categoryIcons.find(({ keywords }) => keywords.some((keyword) => category.includes(keyword)))?.Icon ?? Boxes;
+  if (category.includes("ยานพาหนะ") || category.includes("vehicle")) return <Truck className="size-5" aria-hidden="true" />;
+  if (category.includes("สรรพาวุธ") || category.includes("ammunition")) return <Shield className="size-5" aria-hidden="true" />;
+  if (category.includes("อาวุธ") || category.includes("weapon")) return <Crosshair className="size-5" aria-hidden="true" />;
+  return <Boxes className="size-5" aria-hidden="true" />;
 }
 
 export function CategoryCard({ category }: { category: DashboardCategory }) {
-  const Icon = getCategoryIcon(category.name);
-
   return (
     <Link
       href={`/user/inventory/${encodeURIComponent(category.name)}`}
       className="group rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition duration-200 hover:-translate-y-1 hover:border-blue-200 hover:shadow-[0_14px_30px_rgba(37,99,235,0.14)] focus:outline-none focus:ring-4 focus:ring-blue-100"
     >
       <span className="grid size-10 place-items-center rounded-xl bg-blue-50 text-blue-600 transition group-hover:bg-blue-600 group-hover:text-white">
-        <Icon className="size-5" aria-hidden="true" />
+        <CategoryIcon categoryName={category.name} />
       </span>
       <p className="mt-4 line-clamp-2 min-h-10 text-sm font-semibold leading-5 text-slate-800">{category.name}</p>
       <p className="mt-2 text-xs text-slate-500">

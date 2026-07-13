@@ -10,6 +10,7 @@ import {
   FileImage,
   Hash,
   PackageCheck,
+  Share2,
   Truck,
   UploadCloud,
   X,
@@ -17,12 +18,14 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BorrowInventoryItem,
   BorrowPageData,
   BorrowReceipt,
 } from "@/lib/borrow-service";
+import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
+import { compressImageForSheet, createReceiptImageFile, receiptCanvas, sharePreparedReceipt } from "@/lib/client-media";
 
 type Toast = { type: "success" | "error"; message: string } | null;
 
@@ -42,8 +45,13 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const [note, setNote] = useState("");
   const [evidenceName, setEvidenceName] = useState("");
   const [evidencePreview, setEvidencePreview] = useState("");
+  const [evidenceImage, setEvidenceImage] = useState("");
+  const [isPreparingEvidence, setIsPreparingEvidence] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [isPreparingShare, setIsPreparingShare] = useState(false);
+  const [shareAsset, setShareAsset] = useState<{ id: string; file: File } | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [receipt, setReceipt] = useState<BorrowReceipt | null>(null);
 
@@ -55,6 +63,29 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     (total, item) => total + (item.requirePlate ? 1 : selected[item.inventoryId]),
     0,
   );
+
+  useEffect(() => {
+    if (!receipt) return;
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      if (!receiptRef.current) return;
+      setIsPreparingShare(true);
+      void createReceiptImageFile(receiptRef.current, `${receipt.txId}.jpg`)
+        .then((file) => {
+          if (!cancelled) setShareAsset({ id: receipt.txId, file });
+        })
+        .catch(() => {
+          if (!cancelled) setToast({ type: "error", message: "ไม่สามารถเตรียมรูปสำหรับแชร์ได้" });
+        })
+        .finally(() => {
+          if (!cancelled) setIsPreparingShare(false);
+        });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [receipt]);
 
   function showToast(type: "success" | "error", message: string) {
     setToast({ type, message });
@@ -78,7 +109,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     setSelected((current) => ({ ...current, [item.inventoryId]: quantity }));
   }
 
-  function handleEvidence(event: ChangeEvent<HTMLInputElement>) {
+  async function handleEvidence(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -94,12 +125,18 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setEvidencePreview(String(reader.result ?? ""));
+    setIsPreparingEvidence(true);
+    try {
+      const compressed = await compressImageForSheet(file);
+      setEvidencePreview(compressed);
+      setEvidenceImage(compressed);
       setEvidenceName(file.name);
-    };
-    reader.readAsDataURL(file);
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "ไม่สามารถเตรียมรูปหลักฐานได้");
+      event.target.value = "";
+    } finally {
+      setIsPreparingEvidence(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -128,6 +165,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
           dueDate,
           note,
           evidenceName,
+          evidenceImage,
           items: selectedItems.map((item) => ({
             inventoryId: item.inventoryId,
             quantity: item.requirePlate ? 1 : selected[item.inventoryId],
@@ -147,6 +185,9 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
 
       setReceipt(payload.receipt);
       setSelected({});
+      setEvidenceName("");
+      setEvidencePreview("");
+      setEvidenceImage("");
       showToast("success", "บันทึกการเบิกเรียบร้อยแล้ว");
     } catch {
       showToast("error", "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่");
@@ -162,12 +203,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
 
     setIsDownloading(true);
     try {
-      const { default: html2canvas } = await import("html2canvas");
-      const canvas = await html2canvas(receiptRef.current, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-      });
+      const canvas = await receiptCanvas(receiptRef.current);
       const link = document.createElement("a");
       link.download = `${receipt.txId}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -179,8 +215,23 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     }
   }
 
+  async function shareReceipt() {
+    if (!receipt || shareAsset?.id !== receipt.txId) return;
+    const sharePromise = sharePreparedReceipt(shareAsset.file, `ใบเบิกยุทโธปกรณ์ ${receipt.txId}`);
+    setIsSharing(true);
+    try {
+      const result = await sharePromise;
+      if (result === "downloaded") showToast("success", "อุปกรณ์นี้ไม่รองรับแชร์ไฟล์โดยตรง จึงดาวน์โหลดรูปให้แล้ว");
+    } catch (error) {
+      if (error instanceof Error && error.name !== "AbortError") showToast("error", "ไม่สามารถแชร์ใบเสร็จได้");
+    } finally {
+      setIsSharing(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#dbeafe_0%,#f8fafc_42%,#eef2ff_100%)] pb-32 text-slate-900">
+      {(isSubmitting || isPreparingEvidence || isDownloading || isSharing || isPreparingShare) && <ActionLoadingOverlay message={isPreparingEvidence ? "กำลังย่อและเตรียมรูปหลักฐาน..." : isSharing || isPreparingShare ? "กำลังเตรียมรูปสำหรับแชร์..." : isDownloading ? "กำลังสร้างไฟล์ใบเสร็จ..." : "กำลังบันทึกการเบิก..."} />}
       {toast && (
         <div
           role="status"
@@ -369,7 +420,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                     <span className="block truncate text-sm font-semibold text-slate-700">
                       {evidenceName || "แตะเพื่อเลือกรูปภาพ"}
                     </span>
-                    <span className="mt-1 block text-xs text-slate-500">รองรับรูปไม่เกิน 2 MB · เฟสนี้จัดเก็บชื่อไฟล์</span>
+                    <span className="mt-1 block text-xs text-slate-500">รองรับรูปไม่เกิน 2 MB · ระบบย่อและบันทึกรูปลงประวัติ</span>
                   </span>
                   <FileImage className="size-5 shrink-0 text-blue-500" />
                   <input type="file" accept="image/*" onChange={handleEvidence} className="sr-only" />
@@ -446,15 +497,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
               <p style={{ margin: "20px 0 0", textAlign: "center", color: "#64748b", fontSize: 10 }}>เอกสารนี้สร้างโดยระบบ TEMS โดยอัตโนมัติ</p>
             </div>
 
-            <button
-              type="button"
-              onClick={downloadReceipt}
-              disabled={isDownloading}
-              className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-sm font-bold text-white shadow-lg shadow-blue-200 disabled:opacity-60"
-            >
-              <Download className="size-5" />
-              {isDownloading ? "กำลังสร้างรูป..." : "ดาวน์โหลดใบรับรอง"}
-            </button>
+            <div className="mt-4 grid grid-cols-2 gap-2"><button type="button" onClick={downloadReceipt} disabled={isDownloading || isSharing} className="flex h-12 items-center justify-center gap-1.5 rounded-full bg-blue-600 text-xs font-bold text-white shadow-lg shadow-blue-200 disabled:opacity-60"><Download className="size-4" />โหลด</button><button type="button" onClick={shareReceipt} disabled={isDownloading || isSharing || shareAsset?.id !== receipt.txId} className="flex h-12 items-center justify-center gap-1.5 rounded-full bg-slate-700 text-xs font-bold text-white disabled:opacity-60"><Share2 className="size-4" />{shareAsset?.id === receipt.txId ? "แชร์ภาพ" : "เตรียมภาพ..."}</button></div>
           </div>
         </div>
       )}

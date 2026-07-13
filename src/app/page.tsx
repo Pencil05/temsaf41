@@ -1,4 +1,5 @@
 import { LoginForm } from "@/components/login-form";
+import Image from "next/image";
 
 export default function Home() {
   return (
@@ -10,9 +11,12 @@ export default function Home() {
       <section className="relative z-10 w-full max-w-[390px] text-center">
         <div className="mb-8 flex flex-col items-center sm:mb-10">
           <div className="flex size-[200px] items-center justify-center overflow-hidden rounded-full p-1 ">
-            <img
+            <Image
               src="/changprai.png"
               alt="ตราสัญลักษณ์กองพันทหารอากาศโยธิน กองบิน 41"
+              width={200}
+              height={200}
+              priority
               className="size-full"
             />
           </div>

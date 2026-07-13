@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, RotateCcw, Wrench, X } from "lucide-react"
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import type { DashboardActionData } from "@/lib/inventory-action-service";
+import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 
 type Mode = "return" | "defect" | null;
 
@@ -11,17 +12,24 @@ export function DashboardActions({ data }: { data: DashboardActionData }) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>(null);
   const [transactionId, setTransactionId] = useState("");
-  const [destinationCompanyId, setDestinationCompanyId] = useState("");
+  const [returnQuantity, setReturnQuantity] = useState(1);
   const [defectKey, setDefectKey] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const defect = data.defects.find((item) => `${item.sourceType}:${item.sourceId}` === defectKey);
+  const selectedReturn = data.returns.find((item) => item.transactionId === transactionId);
 
   function chooseReturn(id: string) {
     setTransactionId(id);
-    setDestinationCompanyId(data.returns.find((item) => item.transactionId === id)?.ownerCompanyId || "");
+    setReturnQuantity(1);
+  }
+
+  function updateReturnQuantity(rawValue: string) {
+    const maximum = selectedReturn?.quantity || 1;
+    const nextQuantity = Math.floor(Number(rawValue) || 1);
+    setReturnQuantity(Math.max(1, Math.min(maximum, nextQuantity)));
   }
 
   function chooseDefect(key: string) {
@@ -31,11 +39,11 @@ export function DashboardActions({ data }: { data: DashboardActionData }) {
 
   async function submitReturn(event: FormEvent) {
     event.preventDefault();
-    if (!transactionId || !destinationCompanyId) return setMessage({ type: "error", text: "กรุณาเลือกรายการและสถานที่คืน" });
+    if (!selectedReturn || returnQuantity < 1 || returnQuantity > selectedReturn.quantity) return setMessage({ type: "error", text: "กรุณาตรวจสอบรายการและจำนวนที่จะคืน" });
     setSubmitting(true);
     const response = await fetch("/api/return", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transactionId, destinationCompanyId }),
+      body: JSON.stringify({ transactionId, quantity: returnQuantity }),
     });
     const payload = (await response.json()) as { error?: string };
     setSubmitting(false);
@@ -63,6 +71,7 @@ export function DashboardActions({ data }: { data: DashboardActionData }) {
 
   return (
     <>
+      {submitting && <ActionLoadingOverlay message={mode === "return" ? "กำลังคืนยุทโธปกรณ์และปรับยอดคลัง..." : "กำลังบันทึกการแจ้งเสีย..."} />}
       {message && (
         <div className={`fixed left-4 right-4 top-4 z-[100] mx-auto flex max-w-md items-center gap-3 rounded-2xl border px-4 py-3 text-sm shadow-xl ${message.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
           {message.type === "success" ? <CheckCircle2 className="size-5" /> : <AlertTriangle className="size-5" />}
@@ -84,7 +93,8 @@ export function DashboardActions({ data }: { data: DashboardActionData }) {
         <Modal title="คืนยุทโธปกรณ์" onClose={() => setMode(null)}>
           <form onSubmit={submitReturn} className="space-y-4">
             <label className="block"><span className="mb-2 block text-sm font-semibold">รายการที่ถือครอง</span><select value={transactionId} onChange={(event) => chooseReturn(event.target.value)} className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3" required><option value="">เลือกรายการ</option>{data.returns.map((item) => <option key={item.transactionId} value={item.transactionId}>{item.name} · {item.quantity}</option>)}</select></label>
-            <label className="block"><span className="mb-2 block text-sm font-semibold">สถานที่ (กองร้อย) ที่จะคืน</span><select value={destinationCompanyId} onChange={(event) => setDestinationCompanyId(event.target.value)} className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3" required><option value="">เลือกกองร้อย</option>{data.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label>
+            <label className="block"><span className="mb-2 flex items-center justify-between text-sm font-semibold"><span>จำนวนที่จะคืน</span><span className="text-xs font-medium text-slate-500">สูงสุด {selectedReturn?.quantity || 0}</span></span><input type="number" inputMode="numeric" step={1} min={1} max={selectedReturn?.quantity || 1} value={returnQuantity} onChange={(event) => updateReturnQuantity(event.target.value)} disabled={!selectedReturn} className="h-12 w-full rounded-xl border border-slate-200 px-3 disabled:bg-slate-100 disabled:text-slate-400" /></label>
+            <div><span className="mb-2 block text-sm font-semibold">คืนไปยังหน่วยเจ้าของเดิม</span><div className="flex min-h-12 items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 font-semibold text-emerald-800">{selectedReturn?.ownerCompanyName || "เลือกรายการที่ต้องการคืนก่อน"}</div><span className="mt-2 block text-xs text-slate-500">ระบบกำหนดปลายทางจากรายการยืมโดยอัตโนมัติ ไม่สามารถเปลี่ยนหน่วยรับคืนได้</span></div>
             {!data.returns.length && <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">ไม่มีรายการที่กำลังยืม</p>}
             <Actions submitting={submitting} onCancel={() => setMode(null)} />
           </form>

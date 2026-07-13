@@ -1,4 +1,5 @@
-import { AlertTriangle, BellRing, Clock3 } from "lucide-react";
+import { AlertTriangle, BellRing, ChevronRight, Clock3 } from "lucide-react";
+import Link from "next/link";
 import type { DashboardActivity } from "@/lib/google-sheets";
 
 export function ActivityFeed({ activities }: { activities: DashboardActivity[] }) {
@@ -13,9 +14,10 @@ export function ActivityFeed({ activities }: { activities: DashboardActivity[] }
   return (
     <div className="space-y-3">
       {activities.map((activity) => (
-        <article
+        <Link
           key={activity.id}
-          className={`flex gap-3 rounded-2xl border p-4 shadow-sm ${
+          href={activity.href}
+          className={`group flex gap-3 rounded-2xl border p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition duration-200 hover:-translate-y-1 hover:border-blue-200 hover:shadow-[0_14px_30px_rgba(37,99,235,0.14)] ${
             activity.isOverdue
               ? "border-red-200 bg-red-50"
               : "border-slate-100 bg-white"
@@ -29,7 +31,7 @@ export function ActivityFeed({ activities }: { activities: DashboardActivity[] }
             {activity.isOverdue ? (
               <AlertTriangle className="size-5" aria-hidden="true" />
             ) : (
-              <BellRing className="size-5" aria-hidden="true" />
+              <BellRing className="notification-bell size-5" aria-hidden="true" />
             )}
           </span>
           <div className="min-w-0">
@@ -39,7 +41,8 @@ export function ActivityFeed({ activities }: { activities: DashboardActivity[] }
               {activity.isOverdue ? "เกินกำหนดส่งคืน" : "รายการล่าสุด"}
             </p>
           </div>
-        </article>
+          <ChevronRight className="mt-2 size-4 shrink-0 text-slate-400" />
+        </Link>
       ))}
     </div>
   );

@@ -55,6 +55,7 @@ export type BorrowRequestInput = {
   dueDate?: string;
   note?: string;
   evidenceName?: string;
+  evidenceImage?: string;
   items: Array<{ inventoryId: string; quantity: number }>;
 };
 
@@ -149,7 +150,7 @@ function getBoolean(record: SheetRecord, ...fieldNames: string[]) {
 }
 
 function getInventoryKey(row: SheetRow) {
-  return getField(row.record, "Inventory_ID", "InventoryId", "ID") || `row-${row.rowNumber}`;
+  return getField(row.record, "Inv_ID", "Inventory_ID", "InventoryId", "ID") || `row-${row.rowNumber}`;
 }
 
 function getHeaderIndex(headers: string[], ...fieldNames: string[]) {
@@ -304,6 +305,9 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
     if (new Set(input.items.map((item) => item.inventoryId)).size !== input.items.length) {
       throw new BorrowValidationError("พบรายการยุทโธปกรณ์ซ้ำกัน");
     }
+    if (input.evidenceImage && (!input.evidenceImage.startsWith("data:image/jpeg;base64,") || input.evidenceImage.length > 45_000)) {
+      throw new BorrowValidationError("รูปหลักฐานไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");
+    }
 
     const [companiesTable, equipmentTable, inventoriesTable, transactionsTable, auditTable] = await Promise.all([
       getSheetTable("Companies"),
@@ -414,7 +418,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
         { aliases: ["Owner_Company_ID", "OwnerCompanyId"], value: user.companyId },
         { aliases: ["Borrower_Company_ID", "BorrowerCompanyId"], value: input.borrowerCompanyId },
         { aliases: ["User_ID", "UserId"], value: user.userId },
-        { aliases: ["Inventory_ID", "InventoryId"], value: getInventoryKey(item.inventoryRow) },
+        { aliases: ["Inv_ID", "Inventory_ID", "InventoryId"], value: getInventoryKey(item.inventoryRow) },
         { aliases: ["Destination_Inventory_ID", "Borrower_Inventory_ID"], value: item.destinationInventoryId },
         { aliases: ["Equip_ID", "Equipment_ID", "EquipId", "EquipmentId"], value: item.equipmentId },
         { aliases: ["Plate_Number", "PlateNumber"], value: item.plateNumber },
@@ -423,16 +427,16 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
         { aliases: ["Due_Date", "DueDate"], value: dueDate.toISOString() },
         { aliases: ["Status"], value: "Borrowed" },
         { aliases: ["Note", "Remarks"], value: input.note?.trim() || "" },
-        { aliases: ["Evidence", "Evidence_File", "Evidence_File_Name"], value: input.evidenceName || "" },
+        { aliases: ["Evidence_Image", "Evidence", "Evidence_File"], value: input.evidenceImage || input.evidenceName || "" },
       ]),
     );
     const auditRow = buildRow(auditTable.headers, [
-      { aliases: ["Audit_ID", "AuditId", "ID"], value: `AUD-${crypto.randomUUID()}` },
+      { aliases: ["Log_ID", "Audit_ID", "AuditId", "ID"], value: `AUD-${crypto.randomUUID()}` },
       { aliases: ["Timestamp", "Created_At", "Date"], value: now.toISOString() },
       { aliases: ["User_ID", "UserId"], value: user.userId },
       { aliases: ["Action_Type", "Action"], value: "BORROW" },
       { aliases: ["Table_Name", "Target_Table"], value: "Transactions" },
-      { aliases: ["Record_ID", "Tx_ID", "Transaction_ID"], value: txId },
+      { aliases: ["Target_ID", "Record_ID", "Tx_ID", "Transaction_ID"], value: txId },
       {
         aliases: ["Details", "Description", "Note"],
         value: `Borrowed ${requestedRows.length} item(s) for company ${input.borrowerCompanyId}`,
@@ -471,8 +475,9 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
         itemUpdates.push({
           range: `'Inventories'!A${rowNumber}:${columnLetter(inventoriesTable.headers.length - 1)}${rowNumber}`,
           values: [buildRow(inventoriesTable.headers, [
-            { aliases: ["Inventory_ID", "InventoryId", "ID"], value: item.destinationInventoryId },
+            { aliases: ["Inv_ID", "Inventory_ID", "InventoryId", "ID"], value: item.destinationInventoryId },
             { aliases: ["Company_ID", "CompanyId"], value: input.borrowerCompanyId },
+            { aliases: ["Company_Name", "CompanyName"], value: companyNameById.get(input.borrowerCompanyId) || "" },
             { aliases: ["Equip_ID", "Equipment_ID", "EquipId", "EquipmentId"], value: item.equipmentId },
             { aliases: ["Plate_Number", "PlateNumber"], value: item.plateNumber },
             { aliases: ["Qty_Total", "Total_Quantity", "QtyTotal"], value: item.quantity },

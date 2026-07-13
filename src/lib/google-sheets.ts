@@ -2,6 +2,7 @@ import "server-only";
 
 import { google } from "googleapis";
 import type { SessionUser } from "@/lib/auth-session";
+import { verifyPassword } from "@/lib/password-utils";
 
 const mockUsers = [
   {
@@ -28,6 +29,12 @@ const mockUsers = [
 
 type SheetRecord = Record<string, string>;
 
+type CachedValue<T> = { value: T; expiresAt: number };
+
+const SHEET_ROWS_CACHE_TTL_MS = 60_000;
+const sheetRowsCache = new Map<string, CachedValue<SheetRecord[]>>();
+const pendingSheetRows = new Map<string, Promise<SheetRecord[]>>();
+
 export type DashboardCategory = {
   name: string;
   quantity: number;
@@ -38,6 +45,7 @@ export type DashboardActivity = {
   message: string;
   date: string;
   isOverdue: boolean;
+  href: string;
 };
 
 export type UserDashboardData = {
@@ -48,7 +56,9 @@ export type UserDashboardData = {
 
 export type UserHistoryItem = {
   id: string;
+  movementType: "borrow" | "return" | "defect";
   equipmentName: string;
+  borrowerName: string;
   quantity: number;
   ownerCompanyName: string;
   borrowerCompanyName: string;
@@ -56,6 +66,7 @@ export type UserHistoryItem = {
   dueDate: string;
   status: string;
   note: string;
+  evidenceImage: string;
 };
 
 function getGoogleConfiguration() {
@@ -91,32 +102,57 @@ async function getSheetsClient() {
 }
 
 async function getSheetRows(sheetName: string): Promise<SheetRecord[]> {
-  try {
-    const { spreadsheetId } = getGoogleConfiguration();
-    const sheets = await getSheetsClient();
+  const cacheKey = `sheet:${sheetName}`;
+  const cached = sheetRowsCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const pending = pendingSheetRows.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const promise = (async () => {
+    try {
+      const { spreadsheetId } = getGoogleConfiguration();
+      const sheets = await getSheetsClient();
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `'${sheetName}'!A:ZZ`,
     });
-    const [headers = [], ...values] = response.data.values ?? [];
+      const [headers = [], ...values] = response.data.values ?? [];
+      const rows = values
+        .filter((row) => row.some((cell) => cell !== "" && cell !== undefined))
+        .map((row) =>
+          headers.reduce<SheetRecord>((record, header, index) => {
+            const key = String(header).trim();
 
-    return values
-      .filter((row) => row.some((cell) => cell !== "" && cell !== undefined))
-      .map((row) =>
-        headers.reduce<SheetRecord>((record, header, index) => {
-          const key = String(header).trim();
+            if (key) {
+              record[key] = String(row[index] ?? "").trim();
+            }
 
-          if (key) {
-            record[key] = String(row[index] ?? "").trim();
-          }
+            return record;
+          }, {}),
+        );
 
-          return record;
-        }, {}),
-      );
-  } catch (error) {
-    console.error("Google Sheets lookup failed", error);
-    return [];
-  }
+      sheetRowsCache.set(cacheKey, {
+        value: rows,
+        expiresAt: Date.now() + SHEET_ROWS_CACHE_TTL_MS,
+      });
+
+      return rows;
+    } catch (error) {
+      console.error("Google Sheets lookup failed", error);
+      return [];
+    } finally {
+      pendingSheetRows.delete(cacheKey);
+    }
+  })();
+
+  pendingSheetRows.set(cacheKey, promise);
+  return promise;
 }
 
 function normalizedKey(key: string) {
@@ -136,6 +172,22 @@ function getNumber(record: SheetRecord, ...fieldNames: string[]) {
   const value = Number(rawValue);
 
   return Number.isFinite(value) ? value : 0;
+}
+
+function inferEquipmentIdFromLegacyTransaction(
+  transaction: SheetRecord,
+  inventories: SheetRecord[],
+) {
+  const ownerCompanyId = getField(transaction, "Owner_Company_ID", "OwnerCompanyId");
+  const quantity = getNumber(transaction, "Qty", "Quantity");
+  const candidates = inventories.filter((inventory) =>
+    getField(inventory, "Company_ID", "CompanyId") === ownerCompanyId &&
+    getNumber(inventory, "Qty_Borrowed", "Borrowed_Quantity") >= quantity,
+  );
+
+  return candidates.length === 1
+    ? getField(candidates[0], "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId")
+    : "";
 }
 
 function formatDate(value: string) {
@@ -166,11 +218,11 @@ export async function authenticateUser(email: string, password: string): Promise
         return false;
       }
 
-      if (storedPassword && storedPassword === password) {
+      if (storedPassword && verifyPassword(password, storedPassword)) {
         return true;
       }
 
-      if (storedPasswordHash && storedPasswordHash === password) {
+      if (storedPasswordHash && verifyPassword(password, storedPasswordHash)) {
         return true;
       }
 
@@ -212,11 +264,12 @@ export async function authenticateUser(email: string, password: string): Promise
 }
 
 export async function getUserDashboardData(user: SessionUser): Promise<UserDashboardData> {
-  const [companies, rawEquipments, inventories, transactions] = await Promise.all([
+  const [companies, rawEquipments, inventories, transactions, maintenance] = await Promise.all([
     getSheetRows("Companies"),
     getSheetRows("Equipments"),
     getSheetRows("Inventories"),
     getSheetRows("Transactions"),
+    getSheetRows("Maintenance"),
   ]);
   const masterEquipments = rawEquipments.length ? rawEquipments : await getSheetRows("Master_Equipments");
 
@@ -234,6 +287,15 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
         category: getField(equipment, "Category", "Category_Name", "Equipment_Category", "Equip_Category") || "อื่น ๆ",
       },
     ]),
+  );
+  const equipmentIdByInventoryId = new Map(
+    inventories.flatMap((inventory) => {
+      const inventoryId = getField(inventory, "Inv_ID", "Inventory_ID", "InventoryId", "ID");
+      return inventoryId ? [[
+        inventoryId,
+        getField(inventory, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId"),
+      ] as const] : [];
+    }),
   );
   const quantityByCategory = new Map<string, number>();
   const categoryNames = new Set<string>();
@@ -263,7 +325,7 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
     quantityByCategory.set(category, (quantityByCategory.get(category) ?? 0) + quantity);
   });
 
-  const activities = transactions
+  const transactionActivities = transactions
     .filter((transaction) => {
       const ownerCompanyId = getField(transaction, "Owner_Company_ID", "OwnerCompanyId");
       const borrowerCompanyId = getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId");
@@ -273,29 +335,63 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
     .map((transaction, index) => {
       const ownerCompanyId = getField(transaction, "Owner_Company_ID", "OwnerCompanyId");
       const borrowerCompanyId = getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId");
-      const equipmentId = getField(transaction, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId");
+      const inventoryId = getField(transaction, "Inv_ID", "Inventory_ID", "InventoryId");
+      const equipmentId =
+        getField(transaction, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId") ||
+        equipmentIdByInventoryId.get(inventoryId) ||
+        inferEquipmentIdFromLegacyTransaction(transaction, inventories) ||
+        "";
       const equipmentName =
         equipmentById.get(equipmentId)?.name ||
         getField(transaction, "Equip_Name", "Equipment_Name", "EquipName") ||
         "ยุทโธปกรณ์";
       const quantity = getNumber(transaction, "Qty", "Quantity");
       const borrowDate = getField(transaction, "Borrow_Date", "BorrowDate", "Transaction_Date", "Date");
+      const returnDate = getField(transaction, "Return_Date", "Returned_At");
       const status = getField(transaction, "Status");
-      const isOverdue = status.trim().toLowerCase() === "overdue";
+      const normalizedStatus = status.trim().toLowerCase();
+      const isOverdue = normalizedStatus === "overdue";
       const borrowerCompanyName = companyNameById.get(borrowerCompanyId) || "หน่วยงานอื่น";
       const ownerCompanyName = companyNameById.get(ownerCompanyId) || "หน่วยงานอื่น";
-      const message =
-        ownerCompanyId === user.companyId
+      const activityDate = normalizedStatus === "returned" && returnDate ? returnDate : borrowDate;
+      const message = normalizedStatus === "returned"
+        ? `${borrowerCompanyName} คืน ${equipmentName} จำนวน ${quantity} รายการ ให้ ${ownerCompanyName} เมื่อ ${formatDate(activityDate)}`
+        : ownerCompanyId === user.companyId
           ? `${borrowerCompanyName} ได้เบิก ${equipmentName} จำนวน ${quantity} รายการ ไปเมื่อ ${formatDate(borrowDate)}`
           : `ได้เบิก ${equipmentName} จำนวน ${quantity} รายการ จาก ${ownerCompanyName} เมื่อ ${formatDate(borrowDate)}`;
 
       return {
-        id: getField(transaction, "Transaction_ID", "TransactionId", "ID") || `${equipmentId}-${index}`,
+        id: getField(transaction, "Tx_ID", "Transaction_ID", "TransactionId", "ID") || `${equipmentId}-${index}`,
         message,
-        date: borrowDate,
+        date: activityDate,
         isOverdue,
+        href: `/user/history?tx=${encodeURIComponent(getField(transaction, "Tx_ID", "Transaction_ID", "ID"))}`,
       };
     })
+    .sort((first, second) => Date.parse(second.date) - Date.parse(first.date));
+  const maintenanceActivities = maintenance
+    .filter((record) => {
+      const inventoryId = getField(record, "Inv_ID", "Inventory_ID", "InventoryId");
+      return getField(record, "User_ID", "UserId") === user.userId ||
+        inventories.some((inventory) =>
+          getField(inventory, "Inv_ID", "Inventory_ID", "InventoryId", "ID") === inventoryId &&
+          getField(inventory, "Company_ID", "CompanyId") === user.companyId,
+        );
+    })
+    .map((record, index) => {
+      const inventoryId = getField(record, "Inv_ID", "Inventory_ID", "InventoryId");
+      const equipmentId = equipmentIdByInventoryId.get(inventoryId) || "";
+      const equipmentName = equipmentById.get(equipmentId)?.name || "ยุทโธปกรณ์";
+      const date = getField(record, "Reported_At", "Report_Date", "Date");
+      return {
+        id: getField(record, "Maint_ID", "Maintenance_ID", "ID") || `MNT-${index}`,
+        message: `แจ้ง ${equipmentName} ชำรุด จำนวน ${getNumber(record, "Qty", "Quantity")} รายการ เมื่อ ${formatDate(date)}`,
+        date,
+        isOverdue: false,
+        href: `/user/history?tx=${encodeURIComponent(getField(record, "Maint_ID", "Maintenance_ID", "ID") || `MNT-${index}`)}`,
+      };
+    });
+  const activities = [...transactionActivities, ...maintenanceActivities]
     .sort((first, second) => Date.parse(second.date) - Date.parse(first.date))
     .slice(0, 3);
 
@@ -312,10 +408,13 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
 }
 
 export async function getUserTransactionHistory(user: SessionUser): Promise<UserHistoryItem[]> {
-  const [companies, rawEquipments, transactions] = await Promise.all([
+  const [companies, rawEquipments, inventories, transactions, users, maintenance] = await Promise.all([
     getSheetRows("Companies"),
     getSheetRows("Equipments"),
+    getSheetRows("Inventories"),
     getSheetRows("Transactions"),
+    getSheetRows("Users"),
+    getSheetRows("Maintenance"),
   ]);
   const equipments = rawEquipments.length ? rawEquipments : await getSheetRows("Master_Equipments");
   const companyNames = new Map(companies.map((company) => [
@@ -326,27 +425,90 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
     getField(equipment, "Equip_ID", "Equipment_ID", "EquipId", "ID"),
     getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name"),
   ]));
+  const equipmentIdByInventoryId = new Map(inventories.flatMap((inventory) => {
+    const inventoryId = getField(inventory, "Inv_ID", "Inventory_ID", "InventoryId", "ID");
+    return inventoryId ? [[
+      inventoryId,
+      getField(inventory, "Equip_ID", "Equipment_ID", "EquipId"),
+    ] as const] : [];
+  }));
+  const userNames = new Map(users.map((account) => [
+    getField(account, "User_ID", "UserId", "ID"),
+    [
+      getField(account, "Rank"),
+      getField(account, "First_Name", "FirstName"),
+      getField(account, "Last_Name", "LastName"),
+    ].filter(Boolean).join(" "),
+  ]));
 
-  return transactions
+  const transactionHistory: UserHistoryItem[] = transactions
     .filter((transaction) =>
       getField(transaction, "Owner_Company_ID", "OwnerCompanyId") === user.companyId ||
       getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId") === user.companyId,
     )
     .map((transaction, index) => {
-      const equipmentId = getField(transaction, "Equip_ID", "Equipment_ID", "EquipId");
+      const inventoryId = getField(transaction, "Inv_ID", "Inventory_ID", "InventoryId");
+      const equipmentId =
+        getField(transaction, "Equip_ID", "Equipment_ID", "EquipId") ||
+        equipmentIdByInventoryId.get(inventoryId) ||
+        inferEquipmentIdFromLegacyTransaction(transaction, inventories) ||
+        "";
       const ownerCompanyId = getField(transaction, "Owner_Company_ID", "OwnerCompanyId");
       const borrowerCompanyId = getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId");
+      const transactionUserId = getField(transaction, "User_ID", "UserId");
+      const status = getField(transaction, "Status") || "Unknown";
+      const movementType = status.toLowerCase() === "returned" ? "return" : "borrow";
       return {
         id: getField(transaction, "Tx_ID", "Transaction_ID", "TransactionId", "ID") || `TX-${index}`,
+        movementType,
         equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์",
+        borrowerName: userNames.get(transactionUserId) || transactionUserId || "ไม่ระบุผู้ทำรายการ",
         quantity: getNumber(transaction, "Qty", "Quantity"),
         ownerCompanyName: companyNames.get(ownerCompanyId) || ownerCompanyId,
         borrowerCompanyName: companyNames.get(borrowerCompanyId) || borrowerCompanyId,
-        date: getField(transaction, "Borrow_Date", "Transaction_Date", "Date"),
+        date: movementType === "return"
+          ? getField(transaction, "Return_Date", "Returned_At") || getField(transaction, "Borrow_Date", "Transaction_Date", "Date")
+          : getField(transaction, "Borrow_Date", "Transaction_Date", "Date"),
         dueDate: getField(transaction, "Due_Date", "DueDate"),
-        status: getField(transaction, "Status") || "Unknown",
+        status,
         note: getField(transaction, "Note", "Remarks") || "-",
+        evidenceImage: getField(transaction, "Evidence_Image", "Evidence", "Evidence_File"),
       };
+    });
+  const maintenanceHistory: UserHistoryItem[] = maintenance
+    .filter((record) => {
+      const inventoryId = getField(record, "Inv_ID", "Inventory_ID", "InventoryId");
+      const inventory = inventories.find((item) =>
+        getField(item, "Inv_ID", "Inventory_ID", "InventoryId", "ID") === inventoryId,
+      );
+      return getField(record, "User_ID", "UserId") === user.userId ||
+        getField(inventory ?? {}, "Company_ID", "CompanyId") === user.companyId;
     })
+    .map((record, index) => {
+      const inventoryId = getField(record, "Inv_ID", "Inventory_ID", "InventoryId");
+      const inventory = inventories.find((item) =>
+        getField(item, "Inv_ID", "Inventory_ID", "InventoryId", "ID") === inventoryId,
+      );
+      const equipmentId = getField(record, "Equip_ID", "Equipment_ID", "EquipId") ||
+        getField(inventory ?? {}, "Equip_ID", "Equipment_ID", "EquipId");
+      const companyId = getField(inventory ?? {}, "Company_ID", "CompanyId");
+      const transactionUserId = getField(record, "User_ID", "UserId");
+      return {
+        id: getField(record, "Maint_ID", "Maintenance_ID", "ID") || `MNT-${index}`,
+        movementType: "defect",
+        equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์",
+        borrowerName: userNames.get(transactionUserId) || transactionUserId || "ไม่ระบุผู้ทำรายการ",
+        quantity: getNumber(record, "Qty", "Quantity"),
+        ownerCompanyName: companyNames.get(companyId) || companyId || "-",
+        borrowerCompanyName: companyNames.get(companyId) || companyId || "-",
+        date: getField(record, "Reported_At", "Report_Date", "Created_At", "Date"),
+        dueDate: "",
+        status: getField(record, "Status") || "Reported",
+        note: getField(record, "Note", "Details", "Description") || "-",
+        evidenceImage: "",
+      };
+    });
+
+  return [...transactionHistory, ...maintenanceHistory]
     .sort((first, second) => Date.parse(second.date) - Date.parse(first.date));
 }

@@ -64,8 +64,15 @@ export function readSessionValue(value?: string): SessionUser | null {
       return null;
     }
 
-    const { expiresAt: _expiresAt, ...user } = payload;
-    return user;
+    return {
+      userId: payload.userId,
+      companyId: payload.companyId,
+      email: payload.email,
+      role: payload.role,
+      rank: payload.rank,
+      firstName: payload.firstName,
+      lastName: payload.lastName,
+    };
   } catch {
     return null;
   }

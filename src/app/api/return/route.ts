@@ -9,7 +9,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "กรุณาเข้าสู่ระบบใหม่" }, { status: 401 });
   }
   try {
-    const input = (await request.json()) as { transactionId: string; destinationCompanyId: string };
+    const input = (await request.json()) as { transactionId: string; quantity: number };
     return NextResponse.json(await returnEquipment(user, input));
   } catch (error) {
     if (error instanceof InventoryActionError) {

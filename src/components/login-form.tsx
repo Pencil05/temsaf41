@@ -1,6 +1,7 @@
 "use client";
 
-import { Eye, EyeOff, LockKeyhole, UserRound } from "lucide-react";
+import { Eye, EyeOff, LoaderCircle, LockKeyhole, UserRound } from "lucide-react";
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
@@ -87,20 +88,22 @@ export function LoginForm() {
           </p>
         )}
 
-        <button
-          type="button"
-          className="ml-auto block text-sm font-medium text-blue-600 transition hover:text-blue-700 focus:outline-none focus:underline"
-          onClick={() => setError("Please contact the system administrator to reset your password.")}
+        <Link
+          href="/forgot-password"
+          className="ml-auto block text-right text-sm font-medium text-blue-600 transition hover:text-blue-700 focus:outline-none focus:underline"
         >
           Forgot password ?
-        </button>
+        </Link>
 
         <button
           type="submit"
           disabled={isSubmitting}
           className="mt-2 h-14 w-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 text-sm font-bold tracking-[0.14em] text-white shadow-[0_10px_22px_rgba(79,70,229,0.3)] transition hover:from-blue-600 hover:to-indigo-600 focus:outline-none focus:ring-4 focus:ring-blue-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70"
         >
-          {isSubmitting ? "SIGNING IN..." : "SIGN IN"}
+          <span className="flex items-center justify-center gap-2">
+            {isSubmitting && <LoaderCircle className="size-5 animate-spin" />}
+            {isSubmitting ? "กำลังดาวน์โหลดข้อมูล..." : "SIGN IN"}
+          </span>
         </button>
       </form>
     </div>
