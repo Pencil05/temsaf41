@@ -14,6 +14,12 @@ export function ProfileForm({ profile }: { profile: AccountProfile }) {
 
   function chooseImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]; if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      setMessage("กรุณาเลือกรูปภาพขนาดไม่เกิน 5 MB");
+      event.target.value = "";
+      return;
+    }
+    setMessage("");
     const source = new window.Image();
     const reader = new FileReader();
     reader.onload = () => { source.onload = () => { const canvas = document.createElement("canvas"); canvas.width = 128; canvas.height = 128; const context = canvas.getContext("2d"); if (!context) return; const size = Math.min(source.width, source.height); context.drawImage(source, (source.width - size) / 2, (source.height - size) / 2, size, size, 0, 0, 128, 128); setImage(canvas.toDataURL("image/jpeg", 0.65)); }; source.src = String(reader.result); };

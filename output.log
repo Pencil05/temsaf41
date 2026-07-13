@@ -8,3 +8,35 @@
 - Environments: .env.local
 ✓ Ready in 758ms
 
+ GET / 200 in 326ms (next.js: 67ms, application-code: 259ms)
+ GET /forgot-password 200 in 220ms (next.js: 76ms, application-code: 143ms)
+ GET /api/profile 200 in 2.7s (next.js: 2.1s, application-code: 649ms)
+ GET /user/dashboard 200 in 7.2s (next.js: 2.2s, application-code: 5.0s)
+ GET /user/dashboard 200 in 16.4s (next.js: 11.2s, application-code: 5.3s)
+ GET /user/dashboard 200 in 4.2s (next.js: 7ms, application-code: 4.2s)
+ GET /user/dashboard 200 in 3.9s (next.js: 129ms, application-code: 3.7s)
+ GET /user/dashboard 200 in 3.9s (next.js: 54ms, application-code: 3.8s)
+ GET /user/dashboard 200 in 3.9s (next.js: 94ms, application-code: 3.8s)
+ GET /user/dashboard 200 in 3.9s (next.js: 11ms, application-code: 3.9s)
+ GET /user/dashboard 200 in 393ms (next.js: 225ms, application-code: 169ms)
+ GET /user/dashboard 200 in 405ms (next.js: 11ms, application-code: 395ms)
+ GET /user/dashboard 200 in 403ms (next.js: 152ms, application-code: 251ms)
+ GET /user/dashboard 200 in 406ms (next.js: 88ms, application-code: 318ms)
+ GET /user/dashboard 200 in 409ms (next.js: 51ms, application-code: 358ms)
+ GET /user/dashboard 200 in 410ms (next.js: 186ms, application-code: 224ms)
+ GET /user/dashboard 200 in 385ms (next.js: 9ms, application-code: 376ms)
+ GET /user/dashboard 200 in 390ms (next.js: 53ms, application-code: 336ms)
+ GET /user/dashboard 200 in 390ms (next.js: 123ms, application-code: 267ms)
+ GET /user/dashboard 200 in 392ms (next.js: 90ms, application-code: 303ms)
+ GET /user/dashboard 200 in 347ms (next.js: 154ms, application-code: 193ms)
+ GET /user/dashboard 200 in 201ms (next.js: 97ms, application-code: 104ms)
+✓ Compiled in 4.1s
+▲ Next.js 16.2.10 (Turbopack)
+- Local:         http://127.0.0.1:3000
+- Network:       http://127.0.0.1:3000
+- Environments: .env.local
+✓ Ready in 7.3s
+
+ GET /api/profile 200 in 3.2s (next.js: 1450ms, application-code: 1740ms)
+ GET /user/dashboard 200 in 6.6s (next.js: 1571ms, application-code: 5.0s)
+[?25h

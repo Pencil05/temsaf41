@@ -8,8 +8,10 @@ export const dynamic = "force-dynamic";
 
 export default async function CategoryInventoryPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ category: string }>;
+  searchParams: Promise<{ equipment?: string }>;
 }) {
   const cookieStore = await cookies();
   const user = readSessionValue(cookieStore.get(SESSION_COOKIE_NAME)?.value);
@@ -19,8 +21,9 @@ export default async function CategoryInventoryPage({
   }
 
   const { category } = await params;
+  const { equipment = "" } = await searchParams;
   const decodedCategory = decodeURIComponent(category);
   const data = await getCategoryInventoryData(user, decodedCategory);
 
-  return <CategoryInventoryClient data={data} />;
+  return <CategoryInventoryClient data={data} initialEquipment={equipment} />;
 }

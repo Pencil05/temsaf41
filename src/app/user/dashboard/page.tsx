@@ -12,9 +12,15 @@ import { getDashboardActionData } from "@/lib/inventory-action-service";
 
 export const dynamic = "force-dynamic";
 
-export default async function UserDashboardPage() {
+export default async function UserDashboardPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ action?: string }>;
+}) {
   const cookieStore = await cookies();
   const user = readSessionValue(cookieStore.get(SESSION_COOKIE_NAME)?.value);
+  const resolvedSearchParams = await searchParams;
+  const initialAction = resolvedSearchParams?.action === "return" ? "return" : null;
 
   if (!user || user.role !== "User") {
     redirect("/");
@@ -29,7 +35,7 @@ export default async function UserDashboardPage() {
     <main className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-5xl">
         <DashboardHeader user={user} companyName={dashboard.companyName} />
-        <DashboardActions data={actions} />
+        <DashboardActions key={initialAction ?? "default"} data={actions} initialMode={initialAction} />
 
         <section className="mt-7" aria-labelledby="categories-heading">
           <div className="mb-4 flex items-end justify-between gap-4">

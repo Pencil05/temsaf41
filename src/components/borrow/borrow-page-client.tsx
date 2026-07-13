@@ -5,41 +5,35 @@ import {
   CalendarClock,
   Check,
   CheckCircle2,
-  ClipboardList,
   Download,
   FileImage,
+  FileText,
   Hash,
   PackageCheck,
-  Share2,
-  Truck,
   UploadCloud,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
 import type {
   BorrowInventoryItem,
   BorrowPageData,
   BorrowReceipt,
 } from "@/lib/borrow-service";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
-import { compressImageForSheet, createReceiptImageFile, receiptCanvas, sharePreparedReceipt } from "@/lib/client-media";
+import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
+import { ReceiptDocument } from "@/components/receipt/receipt-document";
+import { EquipmentImage } from "@/components/equipment/equipment-image";
 
 type Toast = { type: "success" | "error"; message: string } | null;
-
-function formatThaiDate(value: string) {
-  return new Intl.DateTimeFormat("th-TH", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
+type QuantityValue = number | "";
 
 export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const router = useRouter();
   const receiptRef = useRef<HTMLDivElement>(null);
-  const [selected, setSelected] = useState<Record<string, number>>({});
+  const [selected, setSelected] = useState<Record<string, QuantityValue>>({});
   const [borrowerCompanyId, setBorrowerCompanyId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [note, setNote] = useState("");
@@ -49,43 +43,19 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const [isPreparingEvidence, setIsPreparingEvidence] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isSharing, setIsSharing] = useState(false);
-  const [isPreparingShare, setIsPreparingShare] = useState(false);
-  const [shareAsset, setShareAsset] = useState<{ id: string; file: File } | null>(null);
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
   const [receipt, setReceipt] = useState<BorrowReceipt | null>(null);
+  const [reviewReceipt, setReviewReceipt] = useState<BorrowReceipt | null>(null);
 
   const selectedItems = useMemo(
-    () => data.inventory.filter((item) => selected[item.inventoryId] !== undefined),
+    () => data.inventory.filter((item) => selected[item.selectionId] !== undefined),
     [data.inventory, selected],
   );
   const selectedQuantity = selectedItems.reduce(
-    (total, item) => total + (item.requirePlate ? 1 : selected[item.inventoryId]),
+    (total, item) => total + (item.requirePlate ? 1 : Number(selected[item.selectionId]) || 0),
     0,
   );
-
-  useEffect(() => {
-    if (!receipt) return;
-    let cancelled = false;
-    const frame = window.requestAnimationFrame(() => {
-      if (!receiptRef.current) return;
-      setIsPreparingShare(true);
-      void createReceiptImageFile(receiptRef.current, `${receipt.txId}.jpg`)
-        .then((file) => {
-          if (!cancelled) setShareAsset({ id: receipt.txId, file });
-        })
-        .catch(() => {
-          if (!cancelled) setToast({ type: "error", message: "ไม่สามารถเตรียมรูปสำหรับแชร์ได้" });
-        })
-        .finally(() => {
-          if (!cancelled) setIsPreparingShare(false);
-        });
-    });
-    return () => {
-      cancelled = true;
-      window.cancelAnimationFrame(frame);
-    };
-  }, [receipt]);
 
   function showToast(type: "success" | "error", message: string) {
     setToast({ type, message });
@@ -95,18 +65,28 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   function toggleItem(item: BorrowInventoryItem) {
     setSelected((current) => {
       const next = { ...current };
-      if (next[item.inventoryId] !== undefined) {
-        delete next[item.inventoryId];
+      if (next[item.selectionId] !== undefined) {
+        delete next[item.selectionId];
       } else {
-        next[item.inventoryId] = 1;
+        next[item.selectionId] = 1;
       }
       return next;
     });
   }
 
   function updateQuantity(item: BorrowInventoryItem, rawValue: string) {
-    const quantity = Math.max(1, Math.min(item.available, Math.floor(Number(rawValue) || 1)));
-    setSelected((current) => ({ ...current, [item.inventoryId]: quantity }));
+    const quantity: QuantityValue = rawValue === ""
+      ? ""
+      : Math.max(1, Math.min(item.available, Math.floor(Number(rawValue) || 1)));
+    setSelected((current) => ({ ...current, [item.selectionId]: quantity }));
+  }
+
+  function normalizeQuantity(item: BorrowInventoryItem) {
+    const quantity = Number(selected[item.selectionId]);
+    setSelected((current) => ({
+      ...current,
+      [item.selectionId]: Math.max(1, Math.min(item.available, Math.floor(quantity || 1))),
+    }));
   }
 
   async function handleEvidence(event: ChangeEvent<HTMLInputElement>) {
@@ -119,8 +99,8 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       event.target.value = "";
       return;
     }
-    if (file.size > 2 * 1024 * 1024) {
-      showToast("error", "รูปหลักฐานต้องมีขนาดไม่เกิน 2 MB");
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("error", "รูปหลักฐานต้องมีขนาดไม่เกิน 5 MB");
       event.target.value = "";
       return;
     }
@@ -139,11 +119,16 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!selectedItems.length) {
       showToast("error", "กรุณาเลือกยุทโธปกรณ์อย่างน้อย 1 รายการ");
+      return;
+    }
+    const invalidItem = selectedItems.find((item) => !item.requirePlate && (Number(selected[item.selectionId]) < 1 || Number(selected[item.selectionId]) > item.available));
+    if (invalidItem) {
+      showToast("error", `กรุณาระบุจำนวน ${invalidItem.name} ระหว่าง 1-${invalidItem.available}`);
       return;
     }
     if (!borrowerCompanyId) {
@@ -155,6 +140,26 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       return;
     }
 
+    const borrowerCompanyName = data.companies.find((company) => company.id === borrowerCompanyId)?.name || borrowerCompanyId;
+    setReviewReceipt({
+      txId: "รอยืนยันการบันทึก",
+      date: new Date().toISOString(),
+      borrowerName: data.borrowerName,
+      borrowerCompanyName,
+      ownerCompanyName: data.ownerCompanyName,
+      dueDate: new Date(dueDate).toISOString(),
+      note: note.trim() || "-",
+      evidenceImage,
+      items: selectedItems.map((item) => ({
+        name: item.name,
+        quantity: item.requirePlate ? 1 : Number(selected[item.selectionId]),
+        plateNumber: item.plateNumber,
+      })),
+    });
+  }
+
+  async function confirmBorrow() {
+    if (!reviewReceipt) return;
     setIsSubmitting(true);
     try {
       const response = await fetch("/api/borrow", {
@@ -168,7 +173,8 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
           evidenceImage,
           items: selectedItems.map((item) => ({
             inventoryId: item.inventoryId,
-            quantity: item.requirePlate ? 1 : selected[item.inventoryId],
+            quantity: item.requirePlate ? 1 : Number(selected[item.selectionId]),
+            plateNumber: item.requirePlate ? item.plateNumber : undefined,
           })),
         }),
       });
@@ -184,6 +190,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       }
 
       setReceipt(payload.receipt);
+      setReviewReceipt(null);
       setSelected({});
       setEvidenceName("");
       setEvidencePreview("");
@@ -196,7 +203,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     }
   }
 
-  async function downloadReceipt() {
+  async function downloadJpg() {
     if (!receiptRef.current || !receipt) {
       return;
     }
@@ -205,33 +212,39 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     try {
       const canvas = await receiptCanvas(receiptRef.current);
       const link = document.createElement("a");
-      link.download = `${receipt.txId}.png`;
-      link.href = canvas.toDataURL("image/png");
+      link.download = `${receipt.txId}.jpg`;
+      link.href = canvas.toDataURL("image/jpeg", 0.95);
       link.click();
+      setDownloadMenuOpen(false);
     } catch {
-      showToast("error", "ไม่สามารถสร้างรูปใบเบิกได้ กรุณาลองใหม่");
+      showToast("error", "ไม่สามารถสร้างไฟล์ JPG ได้ กรุณาลองใหม่");
     } finally {
       setIsDownloading(false);
     }
   }
 
-  async function shareReceipt() {
-    if (!receipt || shareAsset?.id !== receipt.txId) return;
-    const sharePromise = sharePreparedReceipt(shareAsset.file, `ใบเบิกยุทโธปกรณ์ ${receipt.txId}`);
-    setIsSharing(true);
+  async function downloadPdf() {
+    if (!receiptRef.current || !receipt) return;
+    setIsDownloading(true);
     try {
-      const result = await sharePromise;
-      if (result === "downloaded") showToast("success", "อุปกรณ์นี้ไม่รองรับแชร์ไฟล์โดยตรง จึงดาวน์โหลดรูปให้แล้ว");
-    } catch (error) {
-      if (error instanceof Error && error.name !== "AbortError") showToast("error", "ไม่สามารถแชร์ใบเสร็จได้");
+      const canvas = await receiptCanvas(receiptRef.current);
+      const { jsPDF } = await import("jspdf");
+      const document = new jsPDF();
+      const width = 186;
+      const height = canvas.height * width / canvas.width;
+      document.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 12, 12, width, height);
+      document.save(`${receipt.txId}.pdf`);
+      setDownloadMenuOpen(false);
+    } catch {
+      showToast("error", "ไม่สามารถสร้างไฟล์ PDF ได้ กรุณาลองใหม่");
     } finally {
-      setIsSharing(false);
+      setIsDownloading(false);
     }
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#dbeafe_0%,#f8fafc_42%,#eef2ff_100%)] pb-32 text-slate-900">
-      {(isSubmitting || isPreparingEvidence || isDownloading || isSharing || isPreparingShare) && <ActionLoadingOverlay message={isPreparingEvidence ? "กำลังย่อและเตรียมรูปหลักฐาน..." : isSharing || isPreparingShare ? "กำลังเตรียมรูปสำหรับแชร์..." : isDownloading ? "กำลังสร้างไฟล์ใบเสร็จ..." : "กำลังบันทึกการเบิก..."} />}
+    <main className="theme-app-page min-h-screen bg-[radial-gradient(circle_at_top,#dbeafe_0%,#f8fafc_42%,#eef2ff_100%)] pb-32 text-slate-900">
+      {(isSubmitting || isPreparingEvidence || isDownloading) && <ActionLoadingOverlay message={isPreparingEvidence ? "กำลังย่อและเตรียมรูปหลักฐาน..." : isDownloading ? "กำลังสร้างไฟล์ใบเสร็จ..." : "กำลังบันทึกการเบิก..."} />}
       {toast && (
         <div
           role="status"
@@ -281,14 +294,14 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
             <div className="mt-4 max-h-[32rem] space-y-3 overflow-y-auto overscroll-contain pr-1">
               {data.inventory.length ? (
                 data.inventory.map((item) => {
-                  const isSelected = selected[item.inventoryId] !== undefined;
+                  const isSelected = selected[item.selectionId] !== undefined;
                   return (
                     <article
-                      key={item.inventoryId}
-                      className={`overflow-hidden rounded-2xl border transition ${
+                      key={item.selectionId}
+                      className={`equipment-selection-item overflow-hidden rounded-2xl border bg-white/75 shadow-[0_8px_22px_rgba(15,23,42,0.06)] transition ${
                         isSelected
-                          ? "border-blue-400 bg-blue-50/80 shadow-md shadow-blue-100"
-                          : "border-slate-200 bg-white hover:border-blue-200"
+                          ? "is-selected border-blue-400 bg-blue-50/80 shadow-md shadow-blue-100"
+                          : "border-slate-200 hover:border-blue-200"
                       }`}
                     >
                       <button
@@ -297,12 +310,8 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                         className="flex w-full items-center gap-3 p-4 text-left"
                         aria-pressed={isSelected}
                       >
-                        <span
-                          className={`grid size-10 shrink-0 place-items-center rounded-xl ${
-                            item.requirePlate ? "bg-indigo-100 text-indigo-600" : "bg-sky-100 text-sky-600"
-                          }`}
-                        >
-                          {item.requirePlate ? <Truck className="size-5" /> : <ClipboardList className="size-5" />}
+                        <span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 p-1.5">
+                          <EquipmentImage name={item.name} className="size-full" />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-bold text-slate-800">{item.name}</span>
@@ -335,8 +344,9 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                                 type="number"
                                 min={1}
                                 max={item.available}
-                                value={selected[item.inventoryId]}
+                                value={selected[item.selectionId]}
                                 onChange={(event) => updateQuantity(item, event.target.value)}
+                                onBlur={() => normalizeQuantity(item)}
                                 className="h-10 w-24 rounded-xl border border-blue-200 bg-white px-3 text-center font-bold text-blue-700 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                               />
                             </label>
@@ -420,7 +430,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                     <span className="block truncate text-sm font-semibold text-slate-700">
                       {evidenceName || "แตะเพื่อเลือกรูปภาพ"}
                     </span>
-                    <span className="mt-1 block text-xs text-slate-500">รองรับรูปไม่เกิน 2 MB · ระบบย่อและบันทึกรูปลงประวัติ</span>
+                    <span className="mt-1 block text-xs text-slate-500">รองรับรูปไม่เกิน 5 MB · ระบบย่อและบันทึกรูปลงประวัติ</span>
                   </span>
                   <FileImage className="size-5 shrink-0 text-blue-500" />
                   <input type="file" accept="image/*" onChange={handleEvidence} className="sr-only" />
@@ -450,13 +460,23 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
         </div>
       </div>
 
+      {reviewReceipt && (
+        <div className="popup-backdrop fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+          <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
+            <div className="mb-3 px-1"><p className="font-bold text-slate-800">ตรวจสอบก่อนบันทึก</p><p className="text-xs text-slate-500">โปรดตรวจข้อมูลให้ครบถ้วน ระบบยังไม่บันทึกรายการในขั้นตอนนี้</p></div>
+            <ReceiptDocument title="สลิปตรวจสอบการเบิกยุทโธปกรณ์" referenceId={reviewReceipt.txId} status="รอยืนยัน" date={reviewReceipt.date} operatorName={reviewReceipt.borrowerName} ownerCompanyName={reviewReceipt.ownerCompanyName} borrowerCompanyName={reviewReceipt.borrowerCompanyName} dueDate={reviewReceipt.dueDate} note={reviewReceipt.note} evidenceImage={reviewReceipt.evidenceImage} items={reviewReceipt.items} />
+            <div className="mt-4 grid grid-cols-2 gap-3"><button type="button" onClick={() => setReviewReceipt(null)} disabled={isSubmitting} className="h-12 rounded-full bg-white font-bold text-slate-600">ย้อนกลับแก้ไข</button><button type="button" onClick={confirmBorrow} disabled={isSubmitting} className="h-12 rounded-full bg-emerald-600 font-bold text-white disabled:opacity-60">{isSubmitting ? "กำลังบันทึก..." : "ยืนยันการเบิก"}</button></div>
+          </div>
+        </div>
+      )}
+
       {receipt && (
-        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6">
-          <div className="max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
+        <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+          <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 flex items-center justify-between px-1">
               <div>
                 <p className="text-sm font-bold text-slate-800">ใบรับรองดิจิทัล</p>
-                <p className="text-xs text-slate-500">บันทึกภาพเพื่อแชร์ผ่าน LINE</p>
+                <p className="text-xs text-slate-500">ดาวน์โหลดเก็บเป็นไฟล์ JPG หรือ PDF</p>
               </div>
               <button
                 type="button"
@@ -468,37 +488,16 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
               </button>
             </div>
 
-            <div
-              ref={receiptRef}
-              style={{ background: "#ffffff", color: "#0f172a", padding: 24, borderRadius: 20, fontFamily: "Arial, sans-serif" }}
-            >
-              <div style={{ textAlign: "center", borderBottom: "2px solid #2563eb", paddingBottom: 16 }}>
-                <div style={{ display: "inline-flex", width: 48, height: 48, borderRadius: 16, background: "#2563eb", color: "#ffffff", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>TEMS</div>
-                <h2 style={{ margin: "12px 0 4px", fontSize: 20 }}>ใบเบิกยุทโธปกรณ์ดิจิทัล</h2>
-                <p style={{ margin: 0, color: "#64748b", fontSize: 12 }}>Tactical Equipment Management System</p>
-              </div>
-              <div style={{ display: "grid", gap: 10, marginTop: 18, fontSize: 13 }}>
-                <p style={{ margin: 0 }}><strong>Tx_ID:</strong> {receipt.txId}</p>
-                <p style={{ margin: 0 }}><strong>วันที่ทำรายการ:</strong> {formatThaiDate(receipt.date)}</p>
-                <p style={{ margin: 0 }}><strong>ผู้ทำรายการ:</strong> {receipt.borrowerName}</p>
-                <p style={{ margin: 0 }}><strong>หน่วยผู้ให้ยืม:</strong> {receipt.ownerCompanyName}</p>
-                <p style={{ margin: 0 }}><strong>หน่วยผู้ยืม:</strong> {receipt.borrowerCompanyName}</p>
-                <p style={{ margin: 0, color: "#dc2626" }}><strong>กำหนดส่งคืน:</strong> {formatThaiDate(receipt.dueDate)}</p>
-              </div>
-              <div style={{ marginTop: 18, borderTop: "1px solid #cbd5e1", paddingTop: 14 }}>
-                <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700 }}>รายการที่เบิก</p>
-                {receipt.items.map((item, index) => (
-                  <div key={`${item.name}-${index}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 0", borderBottom: "1px solid #e2e8f0", fontSize: 12 }}>
-                    <span>{index + 1}. {item.name}{item.plateNumber ? ` (${item.plateNumber})` : ""}</span>
-                    <strong>x{item.quantity}</strong>
-                  </div>
-                ))}
-              </div>
-              <p style={{ margin: "20px 0 0", textAlign: "center", color: "#64748b", fontSize: 10 }}>เอกสารนี้สร้างโดยระบบ TEMS โดยอัตโนมัติ</p>
-            </div>
+            <div ref={receiptRef}><ReceiptDocument title="รายละเอียดการเบิกยุทโธปกรณ์" referenceId={receipt.txId} status="บันทึกการเบิกแล้ว" date={receipt.date} operatorName={receipt.borrowerName} ownerCompanyName={receipt.ownerCompanyName} borrowerCompanyName={receipt.borrowerCompanyName} dueDate={receipt.dueDate} note={receipt.note} evidenceImage={receipt.evidenceImage} items={receipt.items} /></div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2"><button type="button" onClick={downloadReceipt} disabled={isDownloading || isSharing} className="flex h-12 items-center justify-center gap-1.5 rounded-full bg-blue-600 text-xs font-bold text-white shadow-lg shadow-blue-200 disabled:opacity-60"><Download className="size-4" />โหลด</button><button type="button" onClick={shareReceipt} disabled={isDownloading || isSharing || shareAsset?.id !== receipt.txId} className="flex h-12 items-center justify-center gap-1.5 rounded-full bg-slate-700 text-xs font-bold text-white disabled:opacity-60"><Share2 className="size-4" />{shareAsset?.id === receipt.txId ? "แชร์ภาพ" : "เตรียมภาพ..."}</button></div>
+            <div className="mt-4 flex gap-3"><button type="button" onClick={() => setReceipt(null)} className="h-12 flex-1 rounded-full bg-white font-bold text-slate-600">ปิด</button><button type="button" onClick={() => setDownloadMenuOpen(true)} className="grid size-12 place-items-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200" aria-label="ดาวน์โหลดใบเสร็จ"><Download className="size-5" /></button></div>
           </div>
+        </div>
+      )}
+
+      {downloadMenuOpen && receipt && (
+        <div className="popup-backdrop fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-6 backdrop-blur-sm" role="dialog" aria-modal="true">
+          <div className="popup-panel w-full max-w-xs rounded-[26px] bg-white p-5 shadow-2xl"><div className="flex items-center justify-between"><h3 className="font-bold">ดาวน์โหลดใบเสร็จ</h3><button type="button" onClick={() => setDownloadMenuOpen(false)} className="grid size-9 place-items-center rounded-full bg-slate-100"><X className="size-5 text-slate-500" /></button></div><div className="mt-4 space-y-3"><button type="button" onClick={downloadJpg} disabled={isDownloading} className="flex w-full items-center gap-3 rounded-2xl bg-blue-50 p-4 text-left font-semibold text-blue-700 disabled:opacity-60"><FileImage className="size-5" />ดาวน์โหลดเป็นไฟล์รูป (JPG)</button><button type="button" onClick={downloadPdf} disabled={isDownloading} className="flex w-full items-center gap-3 rounded-2xl bg-red-50 p-4 text-left font-semibold text-red-700 disabled:opacity-60"><FileText className="size-5" />ดาวน์โหลดเป็นไฟล์ PDF</button></div></div>
         </div>
       )}
     </main>

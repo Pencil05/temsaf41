@@ -18,6 +18,7 @@ type SheetTable = {
 };
 
 export type BorrowInventoryItem = {
+  selectionId: string;
   inventoryId: string;
   equipmentId: string;
   name: string;
@@ -34,6 +35,7 @@ export type BorrowCompany = {
 
 export type BorrowPageData = {
   ownerCompanyName: string;
+  borrowerName: string;
   inventory: BorrowInventoryItem[];
   companies: BorrowCompany[];
 };
@@ -46,6 +48,7 @@ export type CategoryInventoryItem = BorrowInventoryItem & {
 export type CategoryInventoryData = {
   category: string;
   companyName: string;
+  borrowerName: string;
   inventory: CategoryInventoryItem[];
   companies: BorrowCompany[];
 };
@@ -56,7 +59,7 @@ export type BorrowRequestInput = {
   note?: string;
   evidenceName?: string;
   evidenceImage?: string;
-  items: Array<{ inventoryId: string; quantity: number }>;
+  items: Array<{ inventoryId: string; quantity: number; plateNumber?: string }>;
 };
 
 export type BorrowReceipt = {
@@ -67,6 +70,7 @@ export type BorrowReceipt = {
   ownerCompanyName: string;
   dueDate: string;
   note: string;
+  evidenceImage: string;
   items: Array<{ name: string; quantity: number; plateNumber: string }>;
 };
 
@@ -153,6 +157,13 @@ function getInventoryKey(row: SheetRow) {
   return getField(row.record, "Inv_ID", "Inventory_ID", "InventoryId", "ID") || `row-${row.rowNumber}`;
 }
 
+function getInventorySelectionKey(row: SheetRow, requirePlate: boolean) {
+  const inventoryId = getInventoryKey(row);
+  if (!requirePlate) return inventoryId;
+  const plateNumber = getField(row.record, "Plate_Number", "PlateNumber") || "no-plate";
+  return `${inventoryId}::${plateNumber}::row-${row.rowNumber}`;
+}
+
 function getHeaderIndex(headers: string[], ...fieldNames: string[]) {
   return headers.findIndex((header) =>
     fieldNames.some((fieldName) => normalizedKey(header) === normalizedKey(fieldName)),
@@ -217,14 +228,16 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
     .map((row) => {
       const equipmentId = getField(row.record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId");
       const equipment = equipmentById.get(equipmentId) ?? {};
+      const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
 
       return {
+        selectionId: getInventorySelectionKey(row, requirePlate),
         inventoryId: getInventoryKey(row),
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
         available: getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable"),
-        requirePlate: getBoolean(equipment, "Require_Plate", "RequirePlate"),
+        requirePlate,
         plateNumber: getField(row.record, "Plate_Number", "PlateNumber"),
       };
     })
@@ -233,6 +246,7 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
 
   return {
     ownerCompanyName: companies.find((company) => company.id === user.companyId)?.name || "หน่วยงานของคุณ",
+    borrowerName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
     companies: companies.filter((company) => company.id !== user.companyId),
     inventory,
   };
@@ -268,6 +282,9 @@ export async function getCategoryInventoryData(
       const rows = matchingRows.length ? matchingRows : [null];
 
       return rows.map((row) => ({
+        selectionId: row
+          ? getInventorySelectionKey(row, getBoolean(equipment, "Require_Plate", "RequirePlate"))
+          : `missing:${equipmentId}`,
         inventoryId: row ? getInventoryKey(row) : `missing:${equipmentId}`,
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
@@ -284,6 +301,7 @@ export async function getCategoryInventoryData(
   return {
     category: categoryName,
     companyName: companies.find((company) => company.id === user.companyId)?.name || "หน่วยงานของคุณ",
+    borrowerName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
     companies: companies.filter((company) => company.id !== user.companyId),
     inventory,
   };
@@ -302,7 +320,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       throw new BorrowValidationError("วันและเวลาส่งคืนต้องอยู่ในอนาคต");
     }
 
-    if (new Set(input.items.map((item) => item.inventoryId)).size !== input.items.length) {
+    if (new Set(input.items.map((item) => `${item.inventoryId}::${item.plateNumber || ""}`)).size !== input.items.length) {
       throw new BorrowValidationError("พบรายการยุทโธปกรณ์ซ้ำกัน");
     }
     if (input.evidenceImage && (!input.evidenceImage.startsWith("data:image/jpeg;base64,") || input.evidenceImage.length > 45_000)) {
@@ -339,7 +357,10 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       ]),
     );
     const requestedRows = input.items.map((requestItem) => {
-      const inventoryRow = inventoriesTable.rows.find((row) => getInventoryKey(row) === requestItem.inventoryId);
+      const inventoryRow = inventoriesTable.rows.find((row) =>
+        getInventoryKey(row) === requestItem.inventoryId &&
+        (!requestItem.plateNumber || getField(row.record, "Plate_Number", "PlateNumber") === requestItem.plateNumber),
+      );
 
       if (!inventoryRow || getField(inventoryRow.record, "Company_ID", "CompanyId") !== user.companyId) {
         throw new BorrowValidationError("ไม่พบยุทโธปกรณ์ที่เลือกในคลังของคุณ");
@@ -353,6 +374,9 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
       const quantity = requirePlate ? 1 : Math.floor(Number(requestItem.quantity));
       const plateNumber = getField(inventoryRow.record, "Plate_Number", "PlateNumber");
+      if (requirePlate && (!requestItem.plateNumber || requestItem.plateNumber !== plateNumber)) {
+        throw new BorrowValidationError("กรุณาเลือกยานพาหนะตามหมายเลขทะเบียนที่แสดง");
+      }
       const destinationInventory = inventoriesTable.rows.find(({ record }) =>
         getField(record, "Company_ID", "CompanyId") === input.borrowerCompanyId &&
         getField(record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId") === equipmentId &&
@@ -519,6 +543,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       ownerCompanyName: companyNameById.get(user.companyId) || user.companyId,
       dueDate: dueDate.toISOString(),
       note: input.note?.trim() || "-",
+      evidenceImage: input.evidenceImage || "",
       items: requestedRows.map((item) => ({
         name: item.name,
         quantity: item.quantity,

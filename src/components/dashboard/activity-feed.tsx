@@ -2,6 +2,33 @@ import { AlertTriangle, BellRing, ChevronRight, Clock3 } from "lucide-react";
 import Link from "next/link";
 import type { DashboardActivity } from "@/lib/google-sheets";
 
+const activityTone = {
+  borrow: {
+    card: "border-amber-200 bg-amber-50/80 active:border-amber-400 active:bg-amber-100",
+    icon: "bg-amber-100 text-amber-700",
+    meta: "text-amber-700",
+    label: "รายการเบิกยุทโธปกรณ์",
+  },
+  return: {
+    card: "border-emerald-200 bg-emerald-50/80 active:border-emerald-400 active:bg-emerald-100",
+    icon: "bg-emerald-100 text-emerald-700",
+    meta: "text-emerald-700",
+    label: "รายการคืนยุทโธปกรณ์",
+  },
+  defect: {
+    card: "border-red-200 bg-red-50/80 active:border-red-400 active:bg-red-100",
+    icon: "bg-red-100 text-red-700",
+    meta: "text-red-700",
+    label: "รายการแจ้งเสีย",
+  },
+  overdue: {
+    card: "border-red-300 bg-red-50 active:border-red-500 active:bg-red-100",
+    icon: "bg-red-100 text-red-700",
+    meta: "text-red-700",
+    label: "เกินกำหนดส่งคืน",
+  },
+};
+
 export function ActivityFeed({ activities }: { activities: DashboardActivity[] }) {
   if (!activities.length) {
     return (
@@ -14,19 +41,9 @@ export function ActivityFeed({ activities }: { activities: DashboardActivity[] }
   return (
     <div className="space-y-3">
       {activities.map((activity) => (
-        <Link
-          key={activity.id}
-          href={activity.href}
-          className={`group flex gap-3 rounded-2xl border p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition duration-200 hover:-translate-y-1 hover:border-blue-200 hover:shadow-[0_14px_30px_rgba(37,99,235,0.14)] ${
-            activity.isOverdue
-              ? "border-red-200 bg-red-50"
-              : "border-slate-100 bg-white"
-          }`}
-        >
+        <Link key={activity.id} href={activity.href} className={`group flex gap-3 rounded-2xl border p-4 shadow-[0_8px_24px_rgba(15,23,42,0.08)] transition duration-200 hover:-translate-y-1 hover:shadow-[0_14px_30px_rgba(37,99,235,0.16)] ${activityTone[activity.kind].card}`}>
           <span
-            className={`grid size-10 shrink-0 place-items-center rounded-xl ${
-              activity.isOverdue ? "bg-red-100 text-red-600" : "bg-blue-50 text-blue-600"
-            }`}
+            className={`grid size-10 shrink-0 place-items-center rounded-xl shadow-sm transition group-hover:scale-110 group-active:scale-110 ${activityTone[activity.kind].icon}`}
           >
             {activity.isOverdue ? (
               <AlertTriangle className="size-5" aria-hidden="true" />
@@ -36,9 +53,9 @@ export function ActivityFeed({ activities }: { activities: DashboardActivity[] }
           </span>
           <div className="min-w-0">
             <p className="text-sm leading-6 text-slate-700">{activity.message}</p>
-            <p className={`mt-1 flex items-center gap-1 text-xs ${activity.isOverdue ? "text-red-600" : "text-slate-400"}`}>
+            <p className={`mt-1 flex items-center gap-1 text-xs font-semibold ${activityTone[activity.kind].meta}`}>
               <Clock3 className="size-3.5" aria-hidden="true" />
-              {activity.isOverdue ? "เกินกำหนดส่งคืน" : "รายการล่าสุด"}
+              {activityTone[activity.kind].label}
             </p>
           </div>
           <ChevronRight className="mt-2 size-4 shrink-0 text-slate-400" />

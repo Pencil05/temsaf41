@@ -10,11 +10,13 @@ type Update = { range: string; values: Array<Array<string | number>> };
 type Field = { aliases: string[]; value: string | number };
 type CachedValue<T> = { value: T; expiresAt: number };
 
-const TABLE_CACHE_TTL_MS = 60_000;
+const TABLE_CACHE_TTL_MS = 0;
 const tableCache = new Map<string, CachedValue<Table>>();
 const pendingTableReads = new Map<string, Promise<Table>>();
 
 export type DashboardActionData = {
+  userName: string;
+  companyName: string;
   companies: Array<{ id: string; name: string }>;
   returns: Array<{ transactionId: string; name: string; quantity: number; ownerCompanyId: string; ownerCompanyName: string }>;
   defects: Array<{ sourceType: "inventory" | "borrowed"; sourceId: string; name: string; maximum: number; label: string }>;
@@ -205,7 +207,13 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
     maximum: item.quantity,
     label: "กำลังยืม",
   })));
-  return { companies, returns, defects };
+  return {
+    userName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+    companyName: companyNames.get(user.companyId) || user.companyId,
+    companies,
+    returns,
+    defects,
+  };
 }
 
 export async function returnEquipment(
@@ -225,17 +233,23 @@ export async function returnEquipment(
     const sourceInventoryId = value(transaction.record, "Inv_ID", "Inventory_ID", "InventoryId");
     const destinationInventoryId = value(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
     const borrowerCompanyId = value(transaction.record, "Borrower_Company_ID", "BorrowerCompanyId");
+    const plateNumber = value(transaction.record, "Plate_Number", "PlateNumber");
     if (borrowerCompanyId !== user.companyId) throw new InventoryActionError("หน่วยของคุณไม่มีสิทธิ์คืนรายการนี้");
     const directEquipmentId = value(transaction.record, "Equip_ID", "Equipment_ID", "EquipId");
-    const sourceInventory = inventories.rows.find((row) => sourceInventoryId && inventoryKey(row) === sourceInventoryId) ||
+    const sourceInventory = inventories.rows.find((row) =>
+      sourceInventoryId && inventoryKey(row) === sourceInventoryId &&
+      (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
+    ) ||
       inventories.rows.find((row) =>
         directEquipmentId && value(row.record, "Company_ID", "CompanyId") === ownerCompanyId &&
-        value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === directEquipmentId,
+        value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === directEquipmentId &&
+        (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
       ) || inferLegacySourceInventory(transaction, inventories.rows);
     const equipmentId = directEquipmentId || value(sourceInventory?.record ?? {}, "Equip_ID", "Equipment_ID", "EquipId");
     const destinationInventory = inventories.rows.find((row) =>
-      (destinationInventoryId && inventoryKey(row) === destinationInventoryId) ||
-      (value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId),
+      ((destinationInventoryId && inventoryKey(row) === destinationInventoryId) ||
+      (value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId)) &&
+      (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
     );
     if (!sourceInventory || !destinationInventory) throw new InventoryActionError("ไม่พบคลังต้นทางหรือปลายทาง");
     const borrowedQuantity = numberValue(transaction.record, "Qty", "Quantity");

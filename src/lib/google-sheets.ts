@@ -32,7 +32,7 @@ type SheetRecord = Record<string, string>;
 
 type CachedValue<T> = { value: T; expiresAt: number };
 
-const SHEET_ROWS_CACHE_TTL_MS = 60_000;
+const SHEET_ROWS_CACHE_TTL_MS = 0;
 const sheetRowsCache = new Map<string, CachedValue<SheetRecord[]>>();
 const pendingSheetRows = new Map<string, Promise<SheetRecord[]>>();
 
@@ -46,7 +46,16 @@ export type DashboardActivity = {
   message: string;
   date: string;
   isOverdue: boolean;
+  kind: "borrow" | "return" | "defect" | "overdue";
   href: string;
+};
+
+export type GlobalSearchItem = {
+  id: string;
+  label: string;
+  description: string;
+  href: string;
+  kind: "equipment" | "category";
 };
 
 export type UserDashboardData = {
@@ -57,8 +66,15 @@ export type UserDashboardData = {
 
 export type UserHistoryItem = {
   id: string;
+  transactionIds: string[];
   movementType: "borrow" | "return" | "defect";
   equipmentName: string;
+  items: Array<{
+    transactionId: string;
+    name: string;
+    quantity: number;
+    plateNumber?: string;
+  }>;
   borrowerName: string;
   quantity: number;
   ownerCompanyName: string;
@@ -380,6 +396,7 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
         message,
         date: activityDate,
         isOverdue,
+        kind: isOverdue ? "overdue" as const : normalizedStatus === "returned" ? "return" as const : "borrow" as const,
         href: `/user/history?tx=${encodeURIComponent(getField(transaction, "Tx_ID", "Transaction_ID", "ID"))}`,
       };
     })
@@ -403,6 +420,7 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
         message: `แจ้ง ${equipmentName} ชำรุด จำนวน ${getNumber(record, "Qty", "Quantity")} รายการ เมื่อ ${formatDate(date)}`,
         date,
         isOverdue: false,
+        kind: "defect" as const,
         href: `/user/history?tx=${encodeURIComponent(getField(record, "Maint_ID", "Maintenance_ID", "ID") || `MNT-${index}`)}`,
       };
     });
@@ -420,6 +438,40 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
     categories: categories.sort((a, b) => a.name.localeCompare(b.name, "th")),
     activities,
   };
+}
+
+export async function getGlobalEquipmentSearchItems(): Promise<GlobalSearchItem[]> {
+  const rawEquipments = await getSheetRows("Equipments");
+  const equipments = rawEquipments.length ? rawEquipments : await getSheetRows("Master_Equipments");
+  const categories = new Map<string, GlobalSearchItem>();
+  const items: GlobalSearchItem[] = [];
+
+  equipments.forEach((equipment, index) => {
+    const equipmentId = getField(equipment, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId", "ID") || `EQ-${index}`;
+    const name = getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name").trim();
+    const category = getField(equipment, "Category", "Category_Name", "Equipment_Category", "Equip_Category").trim() || "อื่น ๆ";
+    if (!name) return;
+
+    if (!categories.has(category)) {
+      categories.set(category, {
+        id: `category:${category}`,
+        label: category,
+        description: "หมวดหมู่ยุทโธปกรณ์",
+        href: `/user/inventory/${encodeURIComponent(category)}`,
+        kind: "category",
+      });
+    }
+
+    items.push({
+      id: `equipment:${equipmentId}`,
+      label: name,
+      description: category,
+      href: `/user/inventory/${encodeURIComponent(category)}?equipment=${encodeURIComponent(name)}`,
+      kind: "equipment",
+    });
+  });
+
+  return [...categories.values(), ...items].sort((first, second) => first.label.localeCompare(second.label, "th"));
 }
 
 export async function getUserTransactionHistory(user: SessionUser): Promise<UserHistoryItem[]> {
@@ -456,7 +508,7 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
     ].filter(Boolean).join(" "),
   ]));
 
-  const transactionHistory: UserHistoryItem[] = transactions
+  const rawTransactionHistory: UserHistoryItem[] = transactions
     .filter((transaction) =>
       getField(transaction, "Owner_Company_ID", "OwnerCompanyId") === user.companyId ||
       getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId") === user.companyId,
@@ -473,12 +525,24 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
       const transactionUserId = getField(transaction, "User_ID", "UserId");
       const status = getField(transaction, "Status") || "Unknown";
       const movementType = status.toLowerCase() === "returned" ? "return" : "borrow";
+      const transactionId = getField(transaction, "Tx_ID", "Transaction_ID", "TransactionId", "ID") || `TX-${index}`;
+      const generatedGroupId = transactionId.match(/^(TX-\d{8}-[A-F0-9]+)-\d+$/i)?.[1];
+      const groupId = getField(transaction, "Group_Tx_ID", "Borrow_Batch_ID") || generatedGroupId || transactionId;
+      const equipmentName = equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์";
+      const quantity = getNumber(transaction, "Qty", "Quantity");
       return {
-        id: getField(transaction, "Tx_ID", "Transaction_ID", "TransactionId", "ID") || `TX-${index}`,
+        id: movementType === "borrow" ? groupId : transactionId,
+        transactionIds: [transactionId],
         movementType,
-        equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์",
+        equipmentName,
+        items: [{
+          transactionId,
+          name: equipmentName,
+          quantity,
+          plateNumber: getField(transaction, "Plate_Number", "PlateNumber") || undefined,
+        }],
         borrowerName: userNames.get(transactionUserId) || transactionUserId || "ไม่ระบุผู้ทำรายการ",
-        quantity: getNumber(transaction, "Qty", "Quantity"),
+        quantity,
         ownerCompanyName: companyNames.get(ownerCompanyId) || ownerCompanyId,
         borrowerCompanyName: companyNames.get(borrowerCompanyId) || borrowerCompanyId,
         date: movementType === "return"
@@ -490,6 +554,33 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
         evidenceImage: getField(transaction, "Evidence_Image", "Evidence", "Evidence_File"),
       };
     });
+  const transactionHistory = [...rawTransactionHistory.reduce((groups, item) => {
+    if (item.movementType !== "borrow") {
+      groups.set(`return:${item.id}`, item);
+      return groups;
+    }
+
+    const key = `borrow:${item.id}`;
+    const current = groups.get(key);
+    if (!current) {
+      groups.set(key, item);
+      return groups;
+    }
+
+    const items = [...current.items, ...item.items];
+    groups.set(key, {
+      ...current,
+      transactionIds: [...current.transactionIds, ...item.transactionIds],
+      equipmentName: items.length > 1 ? `เบิกยุทโธปกรณ์ ${items.length} รายการ` : items[0].name,
+      items,
+      quantity: current.quantity + item.quantity,
+      status: current.status.toLowerCase() === "overdue" || item.status.toLowerCase() === "overdue"
+        ? "Overdue"
+        : current.status,
+      evidenceImage: current.evidenceImage || item.evidenceImage,
+    });
+    return groups;
+  }, new Map<string, UserHistoryItem>()).values()];
   const maintenanceHistory: UserHistoryItem[] = maintenance
     .filter((record) => {
       const inventoryId = getField(record, "Inv_ID", "Inventory_ID", "InventoryId");
@@ -510,8 +601,14 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
       const transactionUserId = getField(record, "User_ID", "UserId");
       return {
         id: getField(record, "Maint_ID", "Maintenance_ID", "ID") || `MNT-${index}`,
+        transactionIds: [],
         movementType: "defect",
         equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์",
+        items: [{
+          transactionId: "",
+          name: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์",
+          quantity: getNumber(record, "Qty", "Quantity"),
+        }],
         borrowerName: userNames.get(transactionUserId) || transactionUserId || "ไม่ระบุผู้ทำรายการ",
         quantity: getNumber(record, "Qty", "Quantity"),
         ownerCompanyName: companyNames.get(companyId) || companyId || "-",

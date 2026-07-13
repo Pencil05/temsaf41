@@ -87,6 +87,16 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The app is already wired to use Google Sheets as its data source, so deployment mainly requires the same environment variables used locally.
+
+1. Import this repository into Vercel and choose the root folder.
+2. In Project Settings → Environment Variables, add the values from [.env.production.example](.env.production.example):
+   - `GOOGLE_CLIENT_EMAIL`
+   - `GOOGLE_PRIVATE_KEY`
+   - `SHEET_ID` (set to `1O7UBSJiPKffZVG6isyTrDD1qUpPtvAQ5ZcUiogIzuf4`)
+   - `SESSION_SECRET`
+   - `ALLOW_MOCK_AUTH=false`
+   - optional SMS variables if you want OTP delivery to work in production.
+3. Deploy the project. The app will read the spreadsheet from the same shared Google Sheet automatically.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

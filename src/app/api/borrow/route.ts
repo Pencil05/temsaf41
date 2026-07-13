@@ -26,7 +26,7 @@ export async function POST(request: Request) {
 
     console.error("TEMS borrow request failed", error);
     return NextResponse.json(
-      { error: "ไม่สามารถบันทึกการเบิกได้ กรุณาตรวจสอบสิทธิ์ Google Sheets แล้วลองใหม่" },
+      { error: "ไม่สามารถบันทึกการเบิกได้ กรุณาลองใหม่อีกครั้ง" },
       { status: 500 },
     );
   }

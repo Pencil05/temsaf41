@@ -34,24 +34,3 @@ export async function receiptCanvas(element: HTMLElement) {
   const { default: html2canvas } = await import("html2canvas");
   return html2canvas(element, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
 }
-
-export async function createReceiptImageFile(element: HTMLElement, filename: string) {
-  const canvas = await receiptCanvas(element);
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
-  if (!blob) throw new Error("ไม่สามารถสร้างรูปใบเสร็จได้");
-  return new File([blob], filename, { type: "image/jpeg" });
-}
-
-export function sharePreparedReceipt(file: File, text: string) {
-  if (navigator.share && navigator.canShare?.({ files: [file] })) {
-    const sharePromise = navigator.share({ title: "TEMS Digital Receipt", text, files: [file] });
-    return sharePromise.then(() => "shared" as const);
-  }
-
-  const link = document.createElement("a");
-  link.download = file.name;
-  link.href = URL.createObjectURL(file);
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  return Promise.resolve("downloaded" as const);
-}

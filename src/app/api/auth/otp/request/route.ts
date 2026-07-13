@@ -18,9 +18,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "เบอร์โทรศัพท์ไม่ตรงกับบัญชีผู้ใช้" }, { status: 400 });
     }
     const otp = await issueOtp(`${input.purpose}:${account.userId}`, phone);
+    if (!otp.delivered) {
+      return NextResponse.json({ error: "ยังไม่สามารถส่ง OTP ได้ กรุณาลองใหม่ภายหลัง" }, { status: 503 });
+    }
     return NextResponse.json({
       maskedPhone: `${phone.slice(0, 3)}****${phone.slice(-3)}`,
-      developmentOtp: otp.delivered ? undefined : otp.code,
     });
   } catch (error) {
     console.error("OTP request failed", error);

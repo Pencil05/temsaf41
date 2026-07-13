@@ -33,13 +33,13 @@ export function LoginForm() {
   }
 
   return (
-    <div className="rounded-[28px] border border-white/80 bg-white/40 px-6 py-8 text-left shadow-[0_18px_50px_rgba(78,94,164,0.15)] backdrop-blur-md sm:px-8 sm:py-9">
+    <div className="rounded-[24px] border border-white/80 bg-white/40 px-5 py-5 text-left shadow-[0_18px_50px_rgba(78,94,164,0.15)] backdrop-blur-md sm:rounded-[28px] sm:px-7 sm:py-6">
       <div>
-        <h2 className="text-3xl text-center font-bold tracking-tight text-slate-950">Welcome</h2>
-        <p className="mt-1.5 text-sm text-center text-slate-500">Sign in to continue</p>
+        <h2 className="text-2xl text-center font-bold tracking-tight text-slate-950 sm:text-3xl">Welcome</h2>
+        <p className="mt-1 text-sm text-center text-slate-500">Sign in to continue</p>
       </div>
 
-      <form className="mt-7 space-y-4" onSubmit={handleSubmit} noValidate>
+      <form className="mt-4 space-y-3 sm:mt-5" onSubmit={handleSubmit} noValidate>
         <label className="relative block">
           <span className="sr-only">Username</span>
           <UserRound
@@ -52,7 +52,7 @@ export function LoginForm() {
             onChange={(event) => setUsername(event.target.value)}
             placeholder="Username"
             autoComplete="username"
-            className="h-14 w-full rounded-xl border border-slate-200 bg-white px-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 sm:h-13"
             required
           />
         </label>
@@ -69,7 +69,7 @@ export function LoginForm() {
             onChange={(event) => setPassword(event.target.value)}
             placeholder="Password"
             autoComplete="current-password"
-            className="h-14 w-full rounded-xl border border-slate-200 bg-white px-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 sm:h-13"
             required
           />
           <button
@@ -98,11 +98,11 @@ export function LoginForm() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="mt-2 h-14 w-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 text-sm font-bold tracking-[0.14em] text-white shadow-[0_10px_22px_rgba(79,70,229,0.3)] transition hover:from-blue-600 hover:to-indigo-600 focus:outline-none focus:ring-4 focus:ring-blue-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70"
+          className="mt-1 h-12 w-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 text-sm font-bold tracking-[0.14em] text-white shadow-[0_10px_22px_rgba(79,70,229,0.3)] transition hover:from-blue-600 hover:to-indigo-600 focus:outline-none focus:ring-4 focus:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-70 sm:h-13"
         >
           <span className="flex items-center justify-center gap-2">
             {isSubmitting && <LoaderCircle className="size-5 animate-spin" />}
-            {isSubmitting ? "กำลังดาวน์โหลดข้อมูล..." : "SIGN IN"}
+            {isSubmitting ? "กำลังเข้าสู่ระบบ..." : "SIGN IN"}
           </span>
         </button>
       </form>

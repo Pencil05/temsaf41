@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("TEMS login failed", error);
     return NextResponse.json(
-      { error: "Unable to sign in. Check the Google Sheets configuration and try again." },
+      { error: "ไม่สามารถเข้าสู่ระบบได้ กรุณาลองใหม่อีกครั้ง" },
       { status: 503 },
     );
   }
