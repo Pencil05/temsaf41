@@ -188,7 +188,7 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
 
       <div className="lg:pl-72">
         <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-xl sm:px-6">
-          <div className="mx-auto flex max-w-5xl items-center gap-3">
+          <div className="mx-auto flex max-w-5xl items-center gap-3 lg:max-w-7xl">
             <button
               onClick={() => setOpen(true)}
               className="grid size-10 shrink-0 place-items-center rounded-xl border border-slate-300 bg-white text-blue-700 shadow-sm hover:border-blue-300 hover:bg-blue-50 active:bg-blue-100 lg:hidden"

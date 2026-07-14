@@ -220,7 +220,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
         </div>
       )}
 
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-5xl lg:max-w-7xl">
         <header className="linear-dark-panel rounded-[28px] bg-gradient-to-br from-blue-700 to-indigo-600 px-5 py-6 text-white shadow-xl shadow-blue-100 sm:px-8">
           <Link href="/user/dashboard" className="inline-flex items-center gap-2 text-sm text-blue-100 hover:text-white">
             <ArrowLeft className="size-4" /> กลับหน้าหลัก

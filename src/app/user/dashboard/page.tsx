@@ -33,7 +33,7 @@ export default async function UserDashboardPage({
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 sm:py-8">
-      <div className="mx-auto w-full max-w-5xl">
+      <div className="mx-auto w-full max-w-5xl lg:max-w-7xl">
         <DashboardHeader user={user} companyName={dashboard.companyName} />
         <DashboardActions key={initialAction ?? "default"} data={actions} initialMode={initialAction} />
 

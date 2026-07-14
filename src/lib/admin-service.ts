@@ -49,6 +49,18 @@ export type AdminMaintenance = {
   evidenceImage: string;
 };
 
+export type AdminAuditLog = {
+  id: string;
+  user: string;
+  action: string;
+  target: string;
+  targetLabel: string;
+  timestamp: string;
+  details: string;
+  companyIds: string[];
+  companyNames: string[];
+};
+
 export type AdminData = {
   companies: Array<{ id: string; name: string; users: number; total: number; available: number; borrowed: number; broken: number; transactions: number }>;
   users: Array<{ id: string; companyId: string; companyName: string; role: string; rank: string; firstName: string; lastName: string; email: string; phone: string; gmail: string }>;
@@ -56,7 +68,7 @@ export type AdminData = {
   inventories: Array<{ id: string; companyId: string; companyName: string; equipmentId: string; equipmentName: string; category: string; plateNumber: string; total: number; available: number; borrowed: number; broken: number }>;
   transactions: AdminTransaction[];
   maintenance: AdminMaintenance[];
-  logs: Array<{ id: string; user: string; action: string; target: string; timestamp: string; details: string; companyIds: string[] }>;
+  logs: AdminAuditLog[];
 };
 
 const norm = (value: string) => value.toLowerCase().replace(/[\s_-]/g, "");
@@ -173,7 +185,10 @@ export async function getAdminData(): Promise<AdminData> {
     const targetUser = userDetails.get(target);
     if (targetUser?.companyId) companyIds.add(targetUser.companyId);
     const actor = userDetails.get(field(record, "User_ID"));
-    return { id: field(record, "Log_ID"), user: actor?.name || field(record, "User_ID") || "ระบบ", action: field(record, "Action_Type"), target, timestamp: field(record, "Timestamp"), details: field(record, "Details"), companyIds: [...companyIds].filter(Boolean) };
+    const targetEquipmentId = targetInventory ? field(targetInventory, "Equip_ID") : maintenanceInventory ? field(maintenanceInventory, "Equip_ID") : targetTransaction ? field(inventoryById.get(field(targetTransaction, "Inv_ID")) || {}, "Equip_ID") : "";
+    const targetLabel = targetUser?.name || equipmentNames.get(targetEquipmentId) || (targetMaintenance ? `รายการแจ้งซ่อม ${target}` : targetTransaction ? `รายการเบิก/คืน ${target}` : targetInventory ? `รายการคลัง ${target}` : target || "ไม่ระบุเป้าหมาย");
+    const resolvedCompanyIds = [...companyIds].filter(Boolean);
+    return { id: field(record, "Log_ID"), user: actor?.name || field(record, "User_ID") || "ระบบ", action: field(record, "Action_Type"), target, targetLabel, timestamp: field(record, "Timestamp"), details: field(record, "Details"), companyIds: resolvedCompanyIds, companyNames: resolvedCompanyIds.map((id) => companyNames.get(id) || id) };
   }).sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
   const companies = companiesTable.rows.map(({ record }) => { const id = field(record, "Company_ID"); const name = field(record, "Company_Name"); const stock = inventories.filter((item) => item.companyId === id); return { id, name, users: users.filter((item) => item.companyId === id).length, total: stock.reduce((sum, item) => sum + item.total, 0), available: stock.reduce((sum, item) => sum + item.available, 0), borrowed: stock.reduce((sum, item) => sum + item.borrowed, 0), broken: stock.reduce((sum, item) => sum + item.broken, 0), transactions: transactions.filter((item) => item.ownerCompanyId === id || item.borrowerCompanyId === id).length }; });
   return { companies, users, equipments, inventories, transactions, maintenance, logs };

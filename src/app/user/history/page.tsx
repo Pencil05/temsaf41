@@ -16,7 +16,7 @@ export default async function UserHistoryPage({ searchParams }: { searchParams: 
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 sm:py-8">
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-3xl lg:max-w-7xl">
         <header className="linear-dark-panel rounded-[28px] bg-gradient-to-br from-blue-700 to-indigo-600 p-6 text-white shadow-xl shadow-blue-100">
           <Link href="/user/dashboard" className="inline-flex items-center gap-2 text-sm text-blue-100 hover:text-white">
             <ArrowLeft className="size-4" /> กลับหน้าหลัก

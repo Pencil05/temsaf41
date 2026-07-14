@@ -21,7 +21,7 @@ export default async function UserMaintenancePage({ searchParams }: { searchPara
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 sm:py-8">
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-3xl lg:max-w-7xl">
         <header className="linear-dark-panel rounded-[28px] bg-gradient-to-br from-orange-600 to-red-600 p-6 text-white shadow-xl shadow-orange-100">
           <Link href="/user/dashboard" className="inline-flex items-center gap-2 text-sm text-orange-100 hover:text-white"><ArrowLeft className="size-4" />กลับหน้าหลัก</Link>
           <div className="mt-5 flex items-center gap-4"><span className="grid size-12 place-items-center rounded-2xl bg-white/15"><Wrench className="size-6" /></span><div><p className="text-sm text-orange-100">Maintenance Center</p><h1 className="text-2xl font-bold">ยุทโธปกรณ์ชำรุด</h1><p className="mt-1 text-sm text-orange-100">ติดตามสถานะและเปิดดูประวัติการแจ้งซ่อม</p></div></div>

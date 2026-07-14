@@ -268,7 +268,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
         </div>
       )}
 
-      <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-8 lg:max-w-7xl">
         <header className="rounded-[28px] border border-white/70 bg-white/65 p-5 shadow-[0_18px_50px_rgba(37,99,235,0.12)] backdrop-blur-xl sm:p-7">
           <Link href="/user/dashboard" className="inline-flex items-center gap-2 text-sm font-medium text-blue-600">
             <ArrowLeft className="size-4" /> กลับหน้าหลัก
@@ -448,7 +448,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/80 bg-white/85 p-4 shadow-[0_-12px_35px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-        <div className="mx-auto flex max-w-3xl items-center gap-4">
+        <div className="mx-auto flex max-w-3xl items-center gap-4 lg:max-w-7xl">
           <div className="min-w-0 flex-1">
             <p className="text-xs text-slate-500">ยอดที่เลือก</p>
             <p className="truncate text-sm font-bold text-slate-800">
