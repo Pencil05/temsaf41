@@ -13,6 +13,7 @@ const kanit = Kanit({
 export const metadata: Metadata = {
   title: "TEMS | Tactical Equipment Management System",
   description: "Tactical Equipment Management System - กองบิน 41",
+  icons: { icon: "/changprai.png", shortcut: "/changprai.png", apple: "/changprai.png" },
 };
 
 export default function RootLayout({

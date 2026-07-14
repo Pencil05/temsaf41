@@ -1,4 +1,4 @@
-import { ArrowLeft, CheckCircle2, Wrench } from "lucide-react";
+import { ArrowLeft, Wrench } from "lucide-react";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -15,8 +15,6 @@ export default async function UserMaintenancePage({ searchParams }: { searchPara
   if (!user || user.role !== "User") redirect("/");
   const [allHistory, actions] = await Promise.all([getUserTransactionHistory(user), getDashboardActionData(user)]);
   const history = allHistory.filter((item) => item.movementType === "defect");
-  const active = history.filter((item) => item.status.toLowerCase() !== "completed").length;
-  const completed = history.length - active;
   const { tx } = await searchParams;
 
   return (
@@ -26,11 +24,6 @@ export default async function UserMaintenancePage({ searchParams }: { searchPara
           <Link href="/user/dashboard" className="inline-flex items-center gap-2 text-sm text-orange-100 hover:text-white"><ArrowLeft className="size-4" />กลับหน้าหลัก</Link>
           <div className="mt-5 flex items-center gap-4"><span className="grid size-12 place-items-center rounded-2xl bg-white/15"><Wrench className="size-6" /></span><div><p className="text-sm text-orange-100">Maintenance Center</p><h1 className="text-2xl font-bold">ยุทโธปกรณ์ชำรุด</h1><p className="mt-1 text-sm text-orange-100">ติดตามสถานะและเปิดดูประวัติการแจ้งซ่อม</p></div></div>
         </header>
-
-        <section className="mt-5 grid grid-cols-2 gap-3">
-          <div className="rounded-2xl border border-orange-200 bg-white p-4 shadow-sm"><Wrench className="size-5 text-orange-600" /><p className="mt-4 text-sm text-slate-500">กำลังดำเนินการ</p><p className="text-3xl font-bold text-orange-700">{active.toLocaleString("th-TH")}</p></div>
-          <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm"><CheckCircle2 className="size-5 text-emerald-600" /><p className="mt-4 text-sm text-slate-500">ซ่อมเสร็จแล้ว</p><p className="text-3xl font-bold text-emerald-700">{completed.toLocaleString("th-TH")}</p></div>
-        </section>
 
         <DashboardActions data={actions} showReturn={false} />
 

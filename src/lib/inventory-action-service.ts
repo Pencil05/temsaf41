@@ -215,13 +215,6 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
     maximum: numberValue(row.record, "Qty_Available", "Available_Quantity"),
     label: "ในคลัง",
   })).filter((item) => item.maximum > 0);
-  defects.push(...returns.map((item) => ({
-    sourceType: "borrowed" as const,
-    sourceId: item.transactionId,
-    name: item.name,
-    maximum: item.quantity,
-    label: "กำลังยืม",
-  })));
   return {
     userName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
     companyName: companyNames.get(user.companyId) || user.companyId,
@@ -324,6 +317,7 @@ export async function reportDefect(
   input: { sourceType: "inventory" | "borrowed"; sourceId: string; quantity: number; note?: string; evidenceImage?: string },
 ) {
   return withSheetsMutationLock(async () => {
+    if (input.sourceType !== "inventory") throw new InventoryActionError("แจ้งซ่อมได้เฉพาะยุทโธปกรณ์ที่เป็นของกองร้อยตนเอง");
     const [inventories, transactions, maintenanceSource, audits] = await Promise.all([
       readTable("Inventories"), readTable("Transactions"), readTable("Maintenance"), readTable("Audit_Log"),
     ]);

@@ -62,7 +62,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
 
   function showToast(type: "success" | "error", message: string) {
     setToast({ type, message });
-    window.setTimeout(() => setToast(null), 4000);
+    window.setTimeout(() => setToast(null), 3000);
   }
 
   function openBorrowModal(item: CategoryInventoryItem) {

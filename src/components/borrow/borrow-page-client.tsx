@@ -10,6 +10,7 @@ import {
   FileText,
   Hash,
   PackageCheck,
+  Search,
   UploadCloud,
   X,
 } from "lucide-react";
@@ -35,6 +36,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const router = useRouter();
   const receiptRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Record<string, QuantityValue>>({});
+  const [equipmentQuery, setEquipmentQuery] = useState("");
   const [borrowerCompanyId, setBorrowerCompanyId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [note, setNote] = useState("");
@@ -60,10 +62,14 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     (total, item) => total + (item.requirePlate ? 1 : Number(selected[item.selectionId]) || 0),
     0,
   );
+  const filteredInventory = useMemo(() => {
+    const keyword = equipmentQuery.trim().toLocaleLowerCase("th");
+    return keyword ? data.inventory.filter((item) => `${item.name} ${item.category} ${item.plateNumber || ""}`.toLocaleLowerCase("th").includes(keyword)) : data.inventory;
+  }, [data.inventory, equipmentQuery]);
 
   function showToast(type: "success" | "error", message: string) {
     setToast({ type, message });
-    window.setTimeout(() => setToast(null), 4500);
+    window.setTimeout(() => setToast(null), 3000);
   }
 
   function toggleItem(item: BorrowInventoryItem) {
@@ -297,9 +303,10 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
               </span>
             </div>
 
-            <div className="mt-4 max-h-[32rem] space-y-3 overflow-y-auto overscroll-contain pr-1 bg-white">
-              {data.inventory.length ? (
-                data.inventory.map((item) => {
+            <div className="relative mt-4"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input value={equipmentQuery} onChange={(event) => setEquipmentQuery(event.target.value)} placeholder="ค้นหาชื่อ หมวดหมู่ หรือทะเบียน..." className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-10 text-sm outline-none focus:border-blue-500" />{equipmentQuery && <button type="button" onClick={() => setEquipmentQuery("")} className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="size-4" /></button>}</div>
+            <div className="mt-3 max-h-[32rem] space-y-3 overflow-y-auto overscroll-contain pr-1 bg-white">
+              {filteredInventory.length ? (
+                filteredInventory.map((item) => {
                   const isSelected = selected[item.selectionId] !== undefined;
                   return (
                     <article

@@ -4,7 +4,7 @@ import { Boxes, History, Home, LogOut, Menu, PackageSearch, RefreshCw, RotateCcw
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import type { AccountProfile } from "@/lib/account-service";
@@ -25,6 +25,9 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
   const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedResult, setSelectedResult] = useState(0);
+  const searchBoxRef = useRef<HTMLDivElement>(null);
   const [account, setAccount] = useState(profile);
   const [navigating, setNavigating] = useState(false);
   const [isRefreshing, startRefresh] = useTransition();
@@ -50,6 +53,12 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
 
     return [...menuResults, ...equipmentResults].slice(0, 10);
   }, [query, searchItems]);
+
+  useEffect(() => {
+    const closeOnScroll = () => setSearchOpen(false);
+    window.addEventListener("scroll", closeOnScroll, true);
+    return () => window.removeEventListener("scroll", closeOnScroll, true);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -197,29 +206,39 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
               <Menu className="size-5" strokeWidth={2.25} />
             </button>
 
-            <div className="relative flex-1">
+            <div ref={searchBoxRef} className="relative flex-1" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => { setQuery(event.target.value); setSelectedResult(0); setSearchOpen(true); }}
+                onFocus={() => setSearchOpen(true)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") { event.preventDefault(); setSearchOpen(true); setSelectedResult((current) => Math.max(0, Math.min(results.length - 1, current + 1))); }
+                  if (event.key === "ArrowUp") { event.preventDefault(); setSelectedResult((current) => Math.max(0, current - 1)); }
+                  if (event.key === "Escape") setSearchOpen(false);
+                  if (event.key === "Enter" && results[selectedResult]) { event.preventDefault(); const href = results[selectedResult].href; setQuery(""); setSearchOpen(false); if (pathname !== href) setNavigating(true); router.push(href); }
+                }}
                 placeholder="ค้นหาเมนู หมวดหมู่ หรือยุทโธปกรณ์..."
-                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-10 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               />
+              {query && <button type="button" onClick={() => { setQuery(""); setSearchOpen(false); }} className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-700" aria-label="ล้างคำค้นหา"><X className="size-4" /></button>}
 
-              {query.trim() && (
+              {query.trim() && searchOpen && (
                 <div className="absolute left-0 right-0 top-12 max-h-[min(65vh,30rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-2xl">
                   {results.length ? (
-                    results.map(({ id, label, description, href, Icon, kind }) => (
+                    results.map(({ id, label, description, href, Icon, kind }, index) => (
                       <Link
                         key={id}
                         href={href}
                         onClick={() => {
                           setQuery("");
+                          setSearchOpen(false);
                           if (pathname !== href) {
                             setNavigating(true);
                           }
                         }}
-                        className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 text-sm hover:bg-blue-50 active:bg-blue-100 last:border-b-0"
+                        onMouseEnter={() => setSelectedResult(index)}
+                        className={`flex items-center gap-3 border-b border-slate-100 px-4 py-3 text-sm active:bg-blue-100 last:border-b-0 ${index === selectedResult ? "bg-blue-50" : "hover:bg-blue-50"}`}
                       >
                         <span
                           className={`grid size-9 shrink-0 place-items-center rounded-lg ${

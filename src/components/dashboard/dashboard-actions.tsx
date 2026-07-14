@@ -3,7 +3,7 @@
 import { AlertTriangle, CheckCircle2, Download, FileImage, FileText, RotateCcw, UploadCloud, Wrench, X } from "lucide-react";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ChangeEvent, FormEvent, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
@@ -23,6 +23,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   const [returnEvidenceImage, setReturnEvidenceImage] = useState("");
   const [isPreparingReturnEvidence, setIsPreparingReturnEvidence] = useState(false);
   const [defectKey, setDefectKey] = useState("");
+  const [defectSearch, setDefectSearch] = useState("");
   const [quantity, setQuantity] = useState<number | "">(1);
   const [note, setNote] = useState("");
   const [defectEvidenceName, setDefectEvidenceName] = useState("");
@@ -46,6 +47,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
     else setReturnReview(false);
   });
   usePopupDismiss(returnDownloadOpen, () => setReturnDownloadOpen(false));
+  useEffect(() => { if (!message) return; const timeout = window.setTimeout(() => setMessage(null), 3000); return () => window.clearTimeout(timeout); }, [message]);
 
   function closeMode() {
     setMode(null);
@@ -103,6 +105,8 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   function openDefect() {
     setDefectEvidenceName("");
     setDefectEvidenceImage("");
+    setDefectSearch("");
+    setDefectKey("");
     setMode("defect");
   }
 
@@ -353,19 +357,8 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
           <form onSubmit={submitDefect} className="space-y-4">
             <label className="block">
               <span className="mb-2 block text-sm font-semibold">รายการยุทโธปกรณ์</span>
-              <select
-                value={defectKey}
-                onChange={(event) => chooseDefect(event.target.value)}
-                className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3"
-                required
-              >
-                <option value="">เลือกรายการ</option>
-                {data.defects.map((item) => (
-                  <option key={`${item.sourceType}:${item.sourceId}`} value={`${item.sourceType}:${item.sourceId}`}>
-                    {item.name} {item.label} สูงสุด {item.maximum}
-                  </option>
-                ))}
-              </select>
+              <input value={defectSearch} list="defect-equipment-options" onChange={(event) => { const next = event.target.value; setDefectSearch(next); const matched = data.defects.find((item) => `${item.name} · ${item.label} · สูงสุด ${item.maximum}` === next); if (matched) chooseDefect(`${matched.sourceType}:${matched.sourceId}`); else setDefectKey(""); }} placeholder="พิมพ์ค้นหาแล้วเลือกรายการ" autoComplete="off" className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3" required />
+              <datalist id="defect-equipment-options">{data.defects.map((item) => <option key={`${item.sourceType}:${item.sourceId}`} value={`${item.name} · ${item.label} · สูงสุด ${item.maximum}`} />)}</datalist>
             </label>
 
             <label className="block">

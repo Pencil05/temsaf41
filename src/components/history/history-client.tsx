@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, Download, Eye, FileImage, FileText, PackageCheck, PackagePlus, Wrench, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { receiptCanvas } from "@/lib/client-media";
@@ -19,11 +19,14 @@ export function HistoryClient({
   const [downloads, setDownloads] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState("");
-  const groups = useMemo(() => groupHistoryByDate(items), [items]);
+  const [dateFilter, setDateFilter] = useState("");
+  const visibleItems = useMemo(() => dateFilter ? items.filter((item) => localDateKey(item.date) === dateFilter) : items, [dateFilter, items]);
+  const groups = useMemo(() => groupHistoryByDate(visibleItems), [visibleItems]);
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(new Set());
   const receiptRef = useRef<HTMLDivElement>(null);
   usePopupDismiss(Boolean(selected) && !downloads, () => setSelected(null));
   usePopupDismiss(downloads, () => setDownloads(false));
+  useEffect(() => { if (!message) return; const timeout = window.setTimeout(() => setMessage(""), 3000); return () => window.clearTimeout(timeout); }, [message]);
 
   async function canvas() {
     if (!receiptRef.current) throw new Error("Receipt unavailable");
@@ -69,8 +72,9 @@ export function HistoryClient({
     {processing && <ActionLoadingOverlay message="กำลังสร้างไฟล์ใบเสร็จ..." />}
     {message && <button onClick={() => setMessage("")} className="fixed left-4 right-4 top-4 z-[210] mx-auto max-w-md rounded-2xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl">{message}</button>}
 
-    <section className="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white">
-      {items.length ? groups.map(({ key, label, items: dateItems }) => {
+    <div className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3"><label className="text-sm font-semibold text-slate-600">เลือกวันที่ <input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} className="ml-2 h-10 rounded-lg border border-slate-200 px-3" /></label>{dateFilter && <button type="button" onClick={() => setDateFilter("")} className="h-10 rounded-lg bg-slate-100 px-3 text-sm font-semibold text-slate-600">แสดงทั้งหมด</button>}</div>
+    <section className="mt-3 max-h-[65dvh] overflow-y-auto rounded-xl border border-slate-200 bg-white">
+      {visibleItems.length ? groups.map(({ key, label, items: dateItems }) => {
         const collapsed = collapsedDates.has(key);
         return <div key={key} className="border-b border-slate-200 last:border-b-0">
           <button type="button" onClick={() => setCollapsedDates((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })} className="flex w-full items-center gap-3 bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100">
@@ -78,11 +82,11 @@ export function HistoryClient({
             <span className="font-semibold text-slate-800">{label}</span>
             <span className="ml-auto rounded-full bg-white px-2.5 py-1 text-xs text-slate-500">{dateItems.length} รายการ</span>
           </button>
-          {!collapsed && <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="border-y border-slate-200 bg-white text-left text-xs text-slate-500"><tr><th className="px-4 py-2 font-medium">ประเภท</th><th className="px-4 py-2 font-medium">ยุทโธปกรณ์</th><th className="px-4 py-2 font-medium">จำนวน</th><th className="px-4 py-2 font-medium">ต้นทาง → ปลายทาง</th><th className="px-4 py-2 font-medium">เวลา</th><th className="px-4 py-2 text-right font-medium">รายละเอียด</th></tr></thead><tbody>{dateItems.map((item) => {
+          {!collapsed && <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="border-y border-slate-200 bg-white text-left text-xs text-slate-500"><tr><th className="px-4 py-2 font-medium">เลขที่เอกสาร</th><th className="px-4 py-2 font-medium">ประเภท</th><th className="px-4 py-2 font-medium">ยุทโธปกรณ์</th><th className="px-4 py-2 font-medium">จำนวน</th><th className="px-4 py-2 font-medium">ต้นทาง → ปลายทาง</th><th className="px-4 py-2 font-medium">เวลา</th><th className="px-4 py-2 text-right font-medium">รายละเอียด</th></tr></thead><tbody>{dateItems.map((item) => {
             const returned = item.movementType === "return";
             const defective = item.movementType === "defect";
             const openReceipt = () => { setDownloads(false); setSelected(item); };
-            return <tr key={`${item.movementType}:${item.id}`} tabIndex={0} onClick={openReceipt} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openReceipt(); } }} className="cursor-pointer border-t border-slate-100 transition hover:bg-blue-50 focus-visible:bg-blue-50 focus-visible:outline-none"><td className="px-4 py-2.5"><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold ${defective ? "bg-orange-50 text-orange-700" : returned ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{defective ? <Wrench className="size-3.5" /> : returned ? <PackageCheck className="size-3.5" /> : <PackagePlus className="size-3.5" />}{defective ? "แจ้งเสีย" : returned ? "คืน" : "เบิก"}</span></td><td className="max-w-[240px] truncate px-4 py-2.5 font-semibold">{item.equipmentName}</td><td className="px-4 py-2.5">{item.quantity.toLocaleString("th-TH")}</td><td className="max-w-[260px] truncate px-4 py-2.5 text-slate-600">{defective ? item.ownerCompanyName || "-" : `${item.ownerCompanyName} → ${item.borrowerCompanyName}`}</td><td className="whitespace-nowrap px-4 py-2.5 text-slate-500">{formatTime(item.date)}</td><td className="px-4 py-2 text-right"><button type="button" onClick={(event) => { event.stopPropagation(); openReceipt(); }} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold transition hover:border-blue-400 hover:text-blue-600"><Eye className="size-3.5" />ดูใบเสร็จ</button></td></tr>;
+            return <tr key={`${item.movementType}:${item.id}`} tabIndex={0} onClick={openReceipt} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openReceipt(); } }} className="cursor-pointer border-t border-slate-100 transition hover:bg-blue-50 focus-visible:bg-blue-50 focus-visible:outline-none"><td className="max-w-[150px] px-4 py-2.5"><span className="block overflow-x-auto whitespace-nowrap font-mono text-xs text-slate-500">{item.id}</span></td><td className="px-4 py-2.5"><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold ${defective ? "bg-orange-50 text-orange-700" : returned ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{defective ? <Wrench className="size-3.5" /> : returned ? <PackageCheck className="size-3.5" /> : <PackagePlus className="size-3.5" />}{defective ? "แจ้งเสีย" : returned ? "คืน" : "เบิก"}</span></td><td className="max-w-[240px] truncate px-4 py-2.5 font-semibold">{item.equipmentName}</td><td className="px-4 py-2.5">{item.quantity.toLocaleString("th-TH")}</td><td className="max-w-[260px] truncate px-4 py-2.5 text-slate-600">{defective ? item.ownerCompanyName || "-" : `${item.ownerCompanyName} → ${item.borrowerCompanyName}`}</td><td className="whitespace-nowrap px-4 py-2.5 text-slate-500">{formatTime(item.date)}</td><td className="px-4 py-2 text-right"><button type="button" onClick={(event) => { event.stopPropagation(); openReceipt(); }} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold transition hover:border-blue-400 hover:text-blue-600"><Eye className="size-3.5" />ดูใบเสร็จ</button></td></tr>;
           })}</tbody></table></div>}
         </div>;
       }) : <div className="p-10 text-center text-sm text-slate-500">ยังไม่มีประวัติการทำรายการ</div>}
@@ -95,7 +99,7 @@ export function HistoryClient({
             <ReceiptDocument
               title={selected.movementType === "defect" ? "รายละเอียดการแจ้งยุทโธปกรณ์ชำรุด" : selected.movementType === "return" ? "รายละเอียดการคืนยุทโธปกรณ์" : "รายละเอียดการเบิกยุทโธปกรณ์"}
               referenceId={selected.id}
-              status={selected.status}
+              status={historyStatus(selected.status)}
               date={selected.date}
               operatorName={selected.borrowerName}
               contactPhone={selected.contactPhone}
@@ -149,3 +153,5 @@ function formatTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "-" : new Intl.DateTimeFormat("th-TH", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
+function localDateKey(value: string) { const date = new Date(value); if (Number.isNaN(date.getTime())) return ""; const year = date.getFullYear(); const month = String(date.getMonth() + 1).padStart(2, "0"); const day = String(date.getDate()).padStart(2, "0"); return `${year}-${month}-${day}`; }
+function historyStatus(status: string) { return ({ borrowed: "กำลังยืม", returned: "คืนแล้ว", overdue: "เกินกำหนด", reported: "แจ้งเสีย", inspecting: "กำลังตรวจสอบ", repairing: "กำลังดำเนินการ", completed: "ซ่อมเสร็จแล้ว", disposed: "จำหน่ายแล้ว" } as Record<string, string>)[status.toLowerCase()] || status; }
