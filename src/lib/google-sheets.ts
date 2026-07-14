@@ -564,7 +564,9 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
         dueDate: getField(transaction, "Due_Date", "DueDate"),
         status,
         note: getField(transaction, "Note", "Remarks") || "-",
-        evidenceImage: getField(transaction, "Evidence_Image", "Evidence", "Evidence_File"),
+        evidenceImage: movementType === "return"
+          ? getField(transaction, "Return_Evidence_Image", "Return_Evidence", "Returned_Evidence_Image")
+          : getField(transaction, "Evidence_Image", "Evidence", "Evidence_File"),
       };
     });
   const transactionHistory = [...rawTransactionHistory.reduce((groups, item) => {
@@ -633,7 +635,7 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
         dueDate: "",
         status: getField(record, "Status") || "Reported",
         note: getField(record, "Note", "Details", "Description") || "-",
-        evidenceImage: "",
+        evidenceImage: getField(record, "Evidence_Image", "Evidence", "Evidence_File"),
       };
     });
 

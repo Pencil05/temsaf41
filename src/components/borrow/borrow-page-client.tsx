@@ -26,6 +26,7 @@ import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { EquipmentImage } from "@/components/equipment/equipment-image";
+import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
 
 type Toast = { type: "success" | "error"; message: string } | null;
 type QuantityValue = number | "";
@@ -47,6 +48,9 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const [toast, setToast] = useState<Toast>(null);
   const [receipt, setReceipt] = useState<BorrowReceipt | null>(null);
   const [reviewReceipt, setReviewReceipt] = useState<BorrowReceipt | null>(null);
+  usePopupDismiss(Boolean(reviewReceipt), () => setReviewReceipt(null));
+  usePopupDismiss(Boolean(receipt) && !downloadMenuOpen, () => setReceipt(null));
+  usePopupDismiss(downloadMenuOpen, () => setDownloadMenuOpen(false));
 
   const selectedItems = useMemo(
     () => data.inventory.filter((item) => selected[item.selectionId] !== undefined),
@@ -463,7 +467,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       </div>
 
       {reviewReceipt && (
-        <div className="popup-backdrop fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewReceipt(null); }}>
           <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 px-1"><p className="font-bold text-slate-800">ตรวจสอบก่อนบันทึก</p><p className="text-xs text-slate-500">โปรดตรวจข้อมูลให้ครบถ้วน ระบบยังไม่บันทึกรายการในขั้นตอนนี้</p></div>
             <ReceiptDocument title="สลิปตรวจสอบการเบิกยุทโธปกรณ์" referenceId={reviewReceipt.txId} status="รอยืนยัน" date={reviewReceipt.date} operatorName={reviewReceipt.borrowerName} contactPhone={reviewReceipt.contactPhone} contactEmail={reviewReceipt.contactEmail} ownerCompanyName={reviewReceipt.ownerCompanyName} borrowerCompanyName={reviewReceipt.borrowerCompanyName} dueDate={reviewReceipt.dueDate} note={reviewReceipt.note} evidenceImage={reviewReceipt.evidenceImage} items={reviewReceipt.items} />
@@ -473,7 +477,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       )}
 
       {receipt && (
-        <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setReceipt(null); }}>
           <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 flex items-center justify-between px-1">
               <div>
@@ -498,7 +502,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       )}
 
       {downloadMenuOpen && receipt && (
-        <div className="popup-backdrop fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-6 backdrop-blur-sm" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setDownloadMenuOpen(false); }}>
           <div className="popup-panel w-full max-w-xs rounded-[26px] bg-white p-5 shadow-2xl"><div className="flex items-center justify-between"><h3 className="font-bold">ดาวน์โหลดใบเสร็จ</h3><button type="button" onClick={() => setDownloadMenuOpen(false)} className="grid size-9 place-items-center rounded-full bg-slate-100"><X className="size-5 text-slate-500" /></button></div><div className="mt-4 space-y-3"><button type="button" onClick={downloadJpg} disabled={isDownloading} className="flex w-full items-center gap-3 rounded-2xl bg-blue-50 p-4 text-left font-semibold text-blue-700 disabled:opacity-60"><FileImage className="size-5" />ดาวน์โหลดเป็นไฟล์รูป (JPG)</button><button type="button" onClick={downloadPdf} disabled={isDownloading} className="flex w-full items-center gap-3 rounded-2xl bg-red-50 p-4 text-left font-semibold text-red-700 disabled:opacity-60"><FileText className="size-5" />ดาวน์โหลดเป็นไฟล์ PDF</button></div></div>
         </div>
       )}

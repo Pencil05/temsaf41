@@ -18,6 +18,7 @@ import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { EquipmentImage } from "@/components/equipment/equipment-image";
 import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
+import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
 import type {
   BorrowReceipt,
   CategoryInventoryData,
@@ -44,6 +45,10 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
   const [isPreparingEvidence, setIsPreparingEvidence] = useState(false);
   const [isProcessingReceipt, setIsProcessingReceipt] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
+  usePopupDismiss(Boolean(activeItem) && !reviewReceipt && !receipt, () => setActiveItem(null));
+  usePopupDismiss(Boolean(reviewReceipt), () => setReviewReceipt(null));
+  usePopupDismiss(Boolean(receipt) && !downloadMenuOpen, () => setReceipt(null));
+  usePopupDismiss(downloadMenuOpen, () => setDownloadMenuOpen(false));
 
   useEffect(() => {
     const targetName = initialEquipment.trim().toLocaleLowerCase("th");
@@ -263,7 +268,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
       </div>
 
       {activeItem && (
-        <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setActiveItem(null); }}>
           <form onSubmit={submitBorrow} className="popup-panel w-full max-w-md rounded-t-[30px] bg-white p-5 shadow-2xl sm:rounded-[30px] sm:p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -289,7 +294,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
       )}
 
       {reviewReceipt && (
-        <div className="popup-backdrop fixed inset-0 z-[95] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[95] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewReceipt(null); }}>
           <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 px-1"><p className="font-bold text-slate-800">ตรวจสอบก่อนบันทึก</p><p className="text-xs text-slate-500">ระบบจะหักยอดคลังหลังจากกดยืนยันด้านล่างเท่านั้น</p></div>
             <ReceiptDocument title="สลิปตรวจสอบการเบิกยุทโธปกรณ์" referenceId={reviewReceipt.txId} status="รอยืนยัน" date={reviewReceipt.date} operatorName={reviewReceipt.borrowerName} contactPhone={data.contactPhone} contactEmail={data.contactEmail} ownerCompanyName={reviewReceipt.ownerCompanyName} borrowerCompanyName={reviewReceipt.borrowerCompanyName} dueDate={reviewReceipt.dueDate} note={reviewReceipt.note} evidenceImage={reviewReceipt.evidenceImage} items={reviewReceipt.items} />
@@ -299,7 +304,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
       )}
 
       {receipt && (
-        <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setReceipt(null); }}>
           <div className="popup-panel w-full max-w-md rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div ref={receiptRef}><ReceiptDocument title="รายละเอียดการเบิกยุทโธปกรณ์" referenceId={receipt.txId} status="บันทึกการเบิกแล้ว" date={receipt.date} operatorName={receipt.borrowerName} contactPhone={receipt.contactPhone} contactEmail={receipt.contactEmail} ownerCompanyName={receipt.ownerCompanyName} borrowerCompanyName={receipt.borrowerCompanyName} dueDate={receipt.dueDate} note={receipt.note} evidenceImage={receipt.evidenceImage} items={receipt.items} /></div>
             <div className="mt-4 flex gap-3"><button type="button" onClick={() => setReceipt(null)} className="h-12 flex-1 rounded-full bg-white font-bold text-slate-600">ปิด</button><button type="button" onClick={() => setDownloadMenuOpen(true)} className="grid size-12 place-items-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200" aria-label="ดาวน์โหลด"><Download className="size-5" /></button></div>
@@ -308,7 +313,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
       )}
 
       {downloadMenuOpen && (
-        <div className="popup-backdrop fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/40 p-6 backdrop-blur-sm" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/40 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setDownloadMenuOpen(false); }}>
           <div className="popup-panel w-full max-w-xs rounded-[26px] bg-white p-5 shadow-2xl"><div className="flex items-center justify-between"><h3 className="font-bold">เลือกรูปแบบดาวน์โหลด</h3><button type="button" onClick={() => setDownloadMenuOpen(false)}><X className="size-5 text-slate-500" /></button></div><div className="mt-4 space-y-3"><button type="button" onClick={downloadJpg} className="flex w-full items-center gap-3 rounded-2xl bg-blue-50 p-4 text-left font-semibold text-blue-700"><FileImage className="size-5" />ดาวน์โหลดเป็นไฟล์รูป (JPG)</button><button type="button" onClick={downloadPdf} className="flex w-full items-center gap-3 rounded-2xl bg-red-50 p-4 text-left font-semibold text-red-700"><FileText className="size-5" />ดาวน์โหลดเป็นไฟล์ PDF</button></div></div>
         </div>
       )}

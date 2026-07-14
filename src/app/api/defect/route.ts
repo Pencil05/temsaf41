@@ -14,6 +14,7 @@ export async function POST(request: Request) {
       sourceId: string;
       quantity: number;
       note?: string;
+      evidenceImage?: string;
     };
     return NextResponse.json(await reportDefect(user, input));
   } catch (error) {

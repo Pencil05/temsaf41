@@ -20,6 +20,7 @@ The complete recommended `Users` header is:
 For borrowing evidence and reliable multi-item receipts, use these columns in `Transactions`:
 
 - `Evidence_Image` — compressed JPEG data URL for the evidence photo. The current spreadsheet already has this column.
+- `Return_Evidence_Image` — compressed JPEG data URL for optional return evidence. The API adds this column automatically when it is missing.
 - `Group_Tx_ID` — recommended batch ID shared by every item in one multi-item borrow.
 - `Destination_Inventory_ID` — recommended inventory ID created or updated at the borrower company.
 - `Equip_ID` and `Plate_Number` — recommended direct references that make historical lookups resilient.

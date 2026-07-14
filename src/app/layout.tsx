@@ -24,6 +24,7 @@ export default function RootLayout({
     <html lang="th" className={`${kanit.variable} h-full`} suppressHydrationWarning>
       <head>
         <script
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var saved=localStorage.getItem('tems-theme');var theme=saved==='dark'||saved==='light'?saved:'light';document.documentElement.dataset.theme=theme;document.documentElement.style.colorScheme=theme;}catch(e){document.documentElement.dataset.theme='light';document.documentElement.style.colorScheme='light';}})();`,
           }}

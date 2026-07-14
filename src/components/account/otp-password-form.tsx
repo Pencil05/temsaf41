@@ -172,15 +172,7 @@ export function OtpPasswordForm({ purpose, email, defaultGmail = "", onCompleted
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="grid size-11 place-items-center rounded-2xl bg-indigo-100 text-indigo-600 shadow-sm">
-          <KeyRound className="size-5" />
-        </span>
-        <div>
-          <h2 className="font-bold text-slate-900">{purpose === "forgot" ? "ตั้งรหัสผ่านใหม่" : "เปลี่ยนรหัสผ่าน"}</h2>
-          <p className="text-xs text-slate-500">ส่งรหัส OTP ไปยัง Gmail สำหรับกู้คืนบัญชี</p>
-        </div>
-      </div>
+
 
       <div className="grid grid-cols-4 gap-2">
         {[

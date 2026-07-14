@@ -1,25 +1,33 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, Download, FileImage, FileText, RotateCcw, Wrench, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileImage, FileText, RotateCcw, UploadCloud, Wrench, X } from "lucide-react";
+import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useRef, useState } from "react";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
-import { receiptCanvas } from "@/lib/client-media";
+import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
+import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
 import type { DashboardActionData } from "@/lib/inventory-action-service";
 
 type Mode = "return" | "defect" | null;
 
-export function DashboardActions({ data, initialMode = null }: { data: DashboardActionData; initialMode?: Mode }) {
+export function DashboardActions({ data, initialMode = null, showReturn = true }: { data: DashboardActionData; initialMode?: Mode; showReturn?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>(initialMode);
   const [transactionId, setTransactionId] = useState("");
   const [returnQuantity, setReturnQuantity] = useState<number | "">(1);
+  const [returnEvidenceName, setReturnEvidenceName] = useState("");
+  const [returnEvidenceImage, setReturnEvidenceImage] = useState("");
+  const [isPreparingReturnEvidence, setIsPreparingReturnEvidence] = useState(false);
   const [defectKey, setDefectKey] = useState("");
   const [quantity, setQuantity] = useState<number | "">(1);
   const [note, setNote] = useState("");
+  const [defectEvidenceName, setDefectEvidenceName] = useState("");
+  const [defectEvidenceImage, setDefectEvidenceImage] = useState("");
+  const [isPreparingDefectEvidence, setIsPreparingDefectEvidence] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [returnReview, setReturnReview] = useState(false);
@@ -32,6 +40,13 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
   const defect = data.defects.find((item) => `${item.sourceType}:${item.sourceId}` === defectKey);
   const selectedReturn = data.returns.find((item) => item.transactionId === transactionId);
 
+  usePopupDismiss(mode !== null && !returnReview, closeMode);
+  usePopupDismiss(returnReview && !returnDownloadOpen, () => {
+    if (returnCompleted) closeCompletedReturn();
+    else setReturnReview(false);
+  });
+  usePopupDismiss(returnDownloadOpen, () => setReturnDownloadOpen(false));
+
   function closeMode() {
     setMode(null);
     if (searchParams.get("action")) {
@@ -42,6 +57,31 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
   function chooseReturn(id: string) {
     setTransactionId(id);
     setReturnQuantity(1);
+  }
+
+  function openReturn() {
+    setReturnEvidenceName("");
+    setReturnEvidenceImage("");
+    setMode("return");
+  }
+
+  async function handleReturnEvidence(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      setMessage({ type: "error", text: "กรุณาเลือกรูปหลักฐานขนาดไม่เกิน 5 MB" });
+      event.target.value = "";
+      return;
+    }
+    setIsPreparingReturnEvidence(true);
+    try {
+      setReturnEvidenceImage(await compressImageForSheet(file));
+      setReturnEvidenceName(file.name);
+    } catch (error) {
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "ไม่สามารถเตรียมรูปหลักฐานได้" });
+    } finally {
+      setIsPreparingReturnEvidence(false);
+    }
   }
 
   function updateReturnQuantity(rawValue: string) {
@@ -58,6 +98,31 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
   function chooseDefect(key: string) {
     setDefectKey(key);
     setQuantity(1);
+  }
+
+  function openDefect() {
+    setDefectEvidenceName("");
+    setDefectEvidenceImage("");
+    setMode("defect");
+  }
+
+  async function handleDefectEvidence(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      setMessage({ type: "error", text: "กรุณาเลือกรูปหลักฐานขนาดไม่เกิน 5 MB" });
+      event.target.value = "";
+      return;
+    }
+    setIsPreparingDefectEvidence(true);
+    try {
+      setDefectEvidenceImage(await compressImageForSheet(file));
+      setDefectEvidenceName(file.name);
+    } catch (error) {
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "ไม่สามารถเตรียมรูปหลักฐานได้" });
+    } finally {
+      setIsPreparingDefectEvidence(false);
+    }
   }
 
   function submitReturn(event: FormEvent) {
@@ -81,7 +146,7 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
     const response = await fetch("/api/return", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transactionId, quantity: requestedQuantity }),
+      body: JSON.stringify({ transactionId, quantity: requestedQuantity, evidenceImage: returnEvidenceImage }),
     });
 
     const payload = (await response.json()) as { error?: string };
@@ -140,6 +205,10 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
       setMessage({ type: "error", text: "กรุณาตรวจสอบรายการและจำนวน" });
       return;
     }
+    if (!defectEvidenceImage) {
+      setMessage({ type: "error", text: "กรุณาแนบรูปหลักฐานการแจ้งเสีย" });
+      return;
+    }
 
     setSubmitting(true);
 
@@ -151,6 +220,7 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
         sourceId: defect.sourceId,
         quantity: requestedQuantity,
         note,
+        evidenceImage: defectEvidenceImage,
       }),
     });
 
@@ -169,8 +239,8 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
 
   return (
     <>
-      {submitting && (
-        <ActionLoadingOverlay message={mode === "return" ? "กำลังคืนยุทโธปกรณ์และปรับยอดคลัง..." : "กำลังบันทึกการแจ้งเสีย..."} />
+      {(submitting || isPreparingDefectEvidence || isPreparingReturnEvidence) && (
+          <ActionLoadingOverlay message={isPreparingDefectEvidence || isPreparingReturnEvidence ? "กำลังเตรียมรูปหลักฐาน..." : mode === "return" ? "กำลังคืนยุทโธปกรณ์และปรับยอดคลัง..." : "กำลังบันทึกการแจ้งเสีย..."} />
       )}
       {receiptDownloading && <ActionLoadingOverlay message="กำลังสร้างไฟล์ใบเสร็จ..." />}
 
@@ -188,9 +258,9 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
         </div>
       )}
 
-      <section className="mt-6 grid grid-cols-2 gap-3">
+      <section className={`mt-6 grid gap-3 ${showReturn ? "grid-cols-2" : "grid-cols-1"}`}>
         <button
-          onClick={() => setMode("defect")}
+          onClick={openDefect}
           className="group rounded-[22px] border border-orange-100 bg-white p-4 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:border-orange-200"
         >
           <span className="grid size-11 place-items-center rounded-2xl bg-orange-100 text-orange-600 transition group-hover:bg-orange-600 group-hover:text-white group-active:bg-orange-600 group-active:text-white">
@@ -200,8 +270,8 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
           <span className="mt-1 block text-xs text-slate-500">รายงานรายการชำรุด</span>
         </button>
 
-        <button
-          onClick={() => setMode("return")}
+        {showReturn && <button
+          onClick={openReturn}
           className="group rounded-[22px] border border-emerald-100 bg-white p-4 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:border-emerald-200"
         >
           <span className="grid size-11 place-items-center rounded-2xl bg-emerald-100 text-emerald-600 transition group-hover:bg-emerald-600 group-hover:text-white group-active:bg-emerald-600 group-active:text-white">
@@ -209,7 +279,7 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
           </span>
           <span className="mt-3 block font-bold text-slate-800">คืนยุทโธปกรณ์</span>
           <span className="mt-1 block text-xs text-slate-500">คืนรายการที่กำลังยืม</span>
-        </button>
+        </button>}
       </section>
 
       {mode === "return" && !returnReview && (
@@ -262,6 +332,12 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
                 ระบบกำหนดปลายทางจากรายการยืมโดยอัตโนมัติ ไม่สามารถเปลี่ยนหน่วยรับคืนได้
               </span>
             </div>
+
+            <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-emerald-300 bg-emerald-50 p-3">
+              <span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-white text-emerald-600">{returnEvidenceImage ? <Image src={returnEvidenceImage} alt="รูปหลักฐานการคืน" width={48} height={48} unoptimized className="size-12 object-cover" /> : <UploadCloud className="size-5" />}</span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{returnEvidenceName || "แนบรูปหลักฐานการคืน"}</span><span className="block text-xs text-slate-500">ไม่บังคับ · รูปไม่เกิน 5 MB</span></span>
+              <input type="file" accept="image/*" onChange={handleReturnEvidence} className="sr-only" />
+            </label>
 
             {!data.returns.length && (
               <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">ไม่มีรายการที่กำลังยืม</p>
@@ -324,13 +400,21 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
               />
             </label>
 
+            <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-orange-300 bg-orange-50 p-3">
+              <span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-white text-orange-600">
+                {defectEvidenceImage ? <Image src={defectEvidenceImage} alt="รูปหลักฐานแจ้งเสีย" width={48} height={48} unoptimized className="size-12 object-cover" /> : <UploadCloud className="size-5" />}
+              </span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{defectEvidenceName || "แนบรูปหลักฐานการแจ้งเสีย *"}</span><span className="block text-xs text-slate-500">จำเป็นต้องแนบรูป · ไม่เกิน 5 MB</span></span>
+              <input type="file" accept="image/*" onChange={handleDefectEvidence} className="sr-only" required={!defectEvidenceImage} />
+            </label>
+
             <Actions submitting={submitting} onCancel={closeMode} />
           </form>
         </Modal>
       )}
 
       {returnReview && selectedReturn && (
-        <div className="popup-backdrop fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) { if (returnCompleted) closeCompletedReturn(); else setReturnReview(false); } }}>
           <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 px-1">
               <p className="font-bold text-slate-800">{returnCompleted ? "ใบเสร็จการคืนยุทโธปกรณ์" : "ตรวจก่อนยืนยันการคืน"}</p>
@@ -356,6 +440,7 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
               ownerCompanyName={data.companyName}
               borrowerCompanyName={selectedReturn.ownerCompanyName}
               note="คืนไปยังหน่วยเจ้าของเดิม"
+              evidenceImage={returnEvidenceImage}
               items={[{ name: selectedReturn.name, quantity: Number(returnQuantity) }]}
             />
             </div>
@@ -395,7 +480,7 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
       )}
 
       {returnDownloadOpen && returnCompleted && selectedReturn && (
-        <div className="popup-backdrop fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/45 p-6 backdrop-blur-sm" role="dialog" aria-modal="true">
+        <div className="popup-backdrop fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/45 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setReturnDownloadOpen(false); }}>
           <div className="popup-panel w-full max-w-xs rounded-[26px] bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="font-bold">ดาวน์โหลดใบเสร็จ</h3>
@@ -414,7 +499,7 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
+    <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="popup-panel w-full max-w-md rounded-t-[30px] bg-white p-5 shadow-2xl sm:rounded-[30px]">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-xl font-bold">{title}</h2>

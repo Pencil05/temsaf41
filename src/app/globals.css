@@ -33,6 +33,72 @@ body {
   display: none;
 }
 
+html:not([data-theme="dark"]) .admin-shell {
+  background:
+    linear-gradient(180deg, #f7f7f4 0%, #fafaf7 52%, #f7f7f4 100%);
+  color: #26251e;
+}
+
+html:not([data-theme="dark"]) .admin-shell > aside,
+html:not([data-theme="dark"]) .admin-shell header {
+  border-color: #e6e5e0;
+  background-color: rgba(247, 247, 244, 0.94);
+  box-shadow: none;
+}
+
+html:not([data-theme="dark"]) .admin-shell main section button[class*="bg-white"],
+html:not([data-theme="dark"]) .admin-shell main section div[class*="bg-white"] {
+  border-color: #e6e5e0;
+  box-shadow: none;
+}
+
+html:not([data-theme="dark"]) .admin-shell main section button[class*="bg-white"]:hover {
+  border-color: #cfcdc4;
+  box-shadow: none;
+}
+
+html:not([data-theme="dark"]) .admin-shell nav button:not(.linear-dark-primary):hover {
+  background: #efeee8;
+  color: #26251e;
+}
+
+html:not([data-theme="dark"]) .admin-shell .linear-dark-primary,
+html:not([data-theme="dark"]) .admin-shell button.bg-blue-600,
+html:not([data-theme="dark"]) .admin-shell button.bg-indigo-600 {
+  background-color: #f54e00;
+  color: #ffffff;
+}
+
+html:not([data-theme="dark"]) .admin-shell .linear-dark-primary:hover,
+html:not([data-theme="dark"]) .admin-shell button.bg-blue-600:hover,
+html:not([data-theme="dark"]) .admin-shell button.bg-indigo-600:hover {
+  background-color: #d04200;
+}
+
+html:not([data-theme="dark"]) .admin-shell .text-blue-600,
+html:not([data-theme="dark"]) .admin-shell .text-blue-700,
+html:not([data-theme="dark"]) .admin-shell .text-blue-800 {
+  color: #f54e00;
+}
+
+html:not([data-theme="dark"]) .admin-shell .bg-blue-50 {
+  background-color: #fff1ea;
+}
+
+html:not([data-theme="dark"]) .admin-shell .border-blue-200,
+html:not([data-theme="dark"]) .admin-shell .border-blue-300,
+html:not([data-theme="dark"]) .admin-shell .border-blue-400 {
+  border-color: #efc2ad;
+}
+
+html:not([data-theme="dark"]) .admin-shell input,
+html:not([data-theme="dark"]) .admin-shell select,
+html:not([data-theme="dark"]) .admin-shell textarea {
+  border-radius: 8px;
+  border-color: #cfcdc4;
+  background-color: #ffffff;
+}
+
 html[data-theme="dark"] {
   --background: #010102;
   --foreground: #f7f8f8;

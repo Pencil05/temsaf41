@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, History, Home, LogOut, Menu, PackageSearch, RefreshCw, RotateCcw, Search, Settings, UserRound, X } from "lucide-react";
+import { Boxes, History, Home, LogOut, Menu, PackageSearch, RefreshCw, RotateCcw, Search, Settings, UserRound, Wrench, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -15,6 +15,7 @@ const shortcuts = [
   { label: "เบิกยุทโธปกรณ์", href: "/user/borrow", Icon: PackageSearch, tone: "bg-cyan-100 text-cyan-700" },
   { label: "คืนยุทโธปกรณ์", href: "/user/dashboard?action=return", Icon: RotateCcw, tone: "bg-emerald-100 text-emerald-700" },
   { label: "ประวัติการเบิก / คืน", href: "/user/history", Icon: History, tone: "bg-amber-100 text-amber-700" },
+  { label: "ยุทโธปกรณ์ชำรุด", href: "/user/maintenance", Icon: Wrench, tone: "bg-orange-100 text-orange-700" },
   { label: "ตั้งค่าโปรไฟล์", href: "/user/settings", Icon: Settings, tone: "bg-indigo-100 text-indigo-700" },
 ];
 

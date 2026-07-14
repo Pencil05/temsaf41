@@ -133,6 +133,17 @@ function append(table: Table, values: Array<string | number>): Update {
   return { range: `'${table.name}'!A${rowNumber}:${letter(table.headers.length - 1)}${rowNumber}`, values: [values] };
 }
 
+function withColumns(table: Table, columns: string[], updates: Update[]) {
+  const headers = [...table.headers];
+  for (const name of columns) {
+    if (column(headers, name) < 0) {
+      updates.push(cell(table, 1, headers.length, name));
+      headers.push(name);
+    }
+  }
+  return { ...table, headers };
+}
+
 async function write(updates: Update[]) {
   const sheets = await sheetsClient();
   await sheets.spreadsheets.values.batchUpdate({
@@ -224,12 +235,18 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
 
 export async function returnEquipment(
   user: SessionUser,
-  input: { transactionId: string; quantity: number },
+  input: { transactionId: string; quantity: number; evidenceImage?: string },
 ) {
   return withSheetsMutationLock(async () => {
-    const [transactions, inventories, audits] = await Promise.all([
+    const [transactionSource, inventories, audits] = await Promise.all([
       readTable("Transactions"), readTable("Inventories"), readTable("Audit_Log"),
     ]);
+    const evidenceImage = String(input.evidenceImage || "");
+    if (evidenceImage && (!evidenceImage.startsWith("data:image/jpeg;base64,") || evidenceImage.length > 45_000)) {
+      throw new InventoryActionError("รูปหลักฐานการคืนไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");
+    }
+    const updates: Update[] = [];
+    const transactions = withColumns(transactionSource, ["Return_Evidence_Image"], updates);
     const transaction = transactions.rows.find(({ record }) =>
       value(record, "Tx_ID", "Transaction_ID", "TransactionId", "ID") === input.transactionId,
     );
@@ -273,7 +290,7 @@ export async function returnEquipment(
       throw new InventoryActionError("จำนวนในคลังปลายทางไม่เพียงพอสำหรับการคืน");
     }
     const now = new Date().toISOString();
-    const updates: Update[] = [
+    updates.push(
       cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), sourceTotal + quantity),
       cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), sourceAvailable + quantity),
       cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Borrowed", "Borrowed_Quantity"), Math.max(0, sourceBorrowed - quantity)),
@@ -281,11 +298,13 @@ export async function returnEquipment(
       cell(inventories, destinationInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), destinationAvailable - quantity),
       cell(transactions, transaction.rowNumber, column(transactions.headers, "Qty", "Quantity"), remainingQuantity || quantity),
       cell(transactions, transaction.rowNumber, column(transactions.headers, "Status"), remainingQuantity === 0 ? "Returned" : "Borrowed"),
-    ];
+    );
     const returnDateColumn = column(transactions.headers, "Return_Date", "Returned_At");
     if (returnDateColumn >= 0) updates.push(cell(transactions, transaction.rowNumber, returnDateColumn, now));
     const returnUserColumn = column(transactions.headers, "Return_User_ID", "Returned_By_User_ID");
     if (returnUserColumn >= 0) updates.push(cell(transactions, transaction.rowNumber, returnUserColumn, user.userId));
+    const returnEvidenceColumn = column(transactions.headers, "Return_Evidence_Image", "Return_Evidence", "Returned_Evidence_Image");
+    if (returnEvidenceColumn >= 0) updates.push(cell(transactions, transaction.rowNumber, returnEvidenceColumn, evidenceImage));
     updates.push(append(audits, rowValues(audits.headers, [
       { aliases: ["Log_ID", "Audit_ID", "ID"], value: `AUD-${crypto.randomUUID()}` },
       { aliases: ["Timestamp", "Created_At", "Date"], value: now },
@@ -302,19 +321,24 @@ export async function returnEquipment(
 
 export async function reportDefect(
   user: SessionUser,
-  input: { sourceType: "inventory" | "borrowed"; sourceId: string; quantity: number; note?: string },
+  input: { sourceType: "inventory" | "borrowed"; sourceId: string; quantity: number; note?: string; evidenceImage?: string },
 ) {
   return withSheetsMutationLock(async () => {
-    const [inventories, transactions, maintenance, audits] = await Promise.all([
+    const [inventories, transactions, maintenanceSource, audits] = await Promise.all([
       readTable("Inventories"), readTable("Transactions"), readTable("Maintenance"), readTable("Audit_Log"),
     ]);
+    const evidenceImage = String(input.evidenceImage || "");
+    if (!evidenceImage.startsWith("data:image/jpeg;base64,") || evidenceImage.length > 45_000) {
+      throw new InventoryActionError("กรุณาแนบรูปหลักฐานการแจ้งเสียที่ถูกต้อง");
+    }
+    const updates: Update[] = [];
+    const maintenance = withColumns(maintenanceSource, ["Evidence_Image"], updates);
     const quantity = Math.floor(Number(input.quantity));
     if (!Number.isInteger(quantity) || quantity < 1) throw new InventoryActionError("จำนวนไม่ถูกต้อง");
     let inventory: Row | undefined;
     let equipmentId = "";
     let maximum = 0;
     let sourceColumn = -1;
-    const updates: Update[] = [];
 
     if (input.sourceType === "inventory") {
       inventory = inventories.rows.find((row) => inventoryKey(row) === input.sourceId && value(row.record, "Company_ID", "CompanyId") === user.companyId);
@@ -375,6 +399,7 @@ export async function reportDefect(
       { aliases: ["Reported_At", "Report_Date", "Created_At", "Date"], value: now },
       { aliases: ["Status"], value: "Reported" },
       { aliases: ["Note", "Details", "Description"], value: input.note?.trim() || "" },
+      { aliases: ["Evidence_Image", "Evidence", "Evidence_File"], value: evidenceImage },
     ])));
     updates.push(append(audits, rowValues(audits.headers, [
       { aliases: ["Log_ID", "Audit_ID", "ID"], value: `AUD-${crypto.randomUUID()}` },
