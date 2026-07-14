@@ -16,6 +16,14 @@ export type SessionUser = {
 
 type SessionPayload = SessionUser & { expiresAt: number };
 
+export function normalizeUserRole(value: unknown): SessionUser["role"] {
+  const role = String(value ?? "").trim().toLowerCase();
+
+  return ["admin", "administrator", "commander", "ผู้ดูแลระบบ", "ผู้บังคับบัญชา"].includes(role)
+    ? "Admin"
+    : "User";
+}
+
 function getSessionSecret() {
   const secret = process.env.SESSION_SECRET || "dev-session-secret";
   return secret;
@@ -68,7 +76,7 @@ export function readSessionValue(value?: string): SessionUser | null {
       userId: payload.userId,
       companyId: payload.companyId,
       email: payload.email,
-      role: payload.role,
+      role: normalizeUserRole(payload.role),
       rank: payload.rank,
       firstName: payload.firstName,
       lastName: payload.lastName,

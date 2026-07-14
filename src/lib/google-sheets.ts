@@ -1,7 +1,7 @@
 import "server-only";
 
 import { google } from "googleapis";
-import type { SessionUser } from "@/lib/auth-session";
+import { normalizeUserRole, type SessionUser } from "@/lib/auth-session";
 import { migrateLegacyPassword } from "@/lib/account-service";
 import { needsPasswordRehash, verifyPassword } from "@/lib/password-utils";
 
@@ -219,10 +219,6 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("th-TH", { dateStyle: "medium" }).format(date);
 }
 
-function getRole(value: string): "Admin" | "User" {
-  return ["admin", "commander"].includes(value.trim().toLowerCase()) ? "Admin" : "User";
-}
-
 export async function authenticateUser(email: string, password: string): Promise<SessionUser | null> {
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -265,7 +261,7 @@ export async function authenticateUser(email: string, password: string): Promise
         userId,
         companyId: getField(user, "Company_ID", "CompanyId"),
         email: getField(user, "Email", "Username", "User_Name"),
-        role: getRole(getField(user, "Role", "User_Role")),
+        role: normalizeUserRole(getField(user, "Role", "User_Role")),
         rank: getField(user, "Rank"),
         firstName: getField(user, "First_Name", "FirstName"),
         lastName: getField(user, "Last_Name", "LastName"),

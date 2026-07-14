@@ -1,8 +1,19 @@
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { readSessionValue, SESSION_COOKIE_NAME } from "@/lib/auth-session";
 import Image from "next/image";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const user = readSessionValue((await cookies()).get(SESSION_COOKIE_NAME)?.value);
+
+  if (user) {
+    redirect(user.role === "Admin" ? "/admin/dashboard" : "/user/dashboard");
+  }
+
   return (
     <main className="theme-auth-page relative flex h-dvh items-center justify-center overflow-hidden px-4 py-3 sm:px-8 sm:py-6">
       <ThemeToggle className="absolute right-3 top-3 z-20 sm:right-5 sm:top-5" />
