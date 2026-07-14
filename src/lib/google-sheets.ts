@@ -76,6 +76,8 @@ export type UserHistoryItem = {
     plateNumber?: string;
   }>;
   borrowerName: string;
+  contactPhone: string;
+  contactEmail: string;
   quantity: number;
   ownerCompanyName: string;
   borrowerCompanyName: string;
@@ -475,13 +477,14 @@ export async function getGlobalEquipmentSearchItems(): Promise<GlobalSearchItem[
 }
 
 export async function getUserTransactionHistory(user: SessionUser): Promise<UserHistoryItem[]> {
-  const [companies, rawEquipments, inventories, transactions, users, maintenance] = await Promise.all([
+  const [companies, rawEquipments, inventories, transactions, users, maintenance, audits] = await Promise.all([
     getSheetRows("Companies"),
     getSheetRows("Equipments"),
     getSheetRows("Inventories"),
     getSheetRows("Transactions"),
     getSheetRows("Users"),
     getSheetRows("Maintenance"),
+    getSheetRows("Audit_Log"),
   ]);
   const equipments = rawEquipments.length ? rawEquipments : await getSheetRows("Master_Equipments");
   const companyNames = new Map(companies.map((company) => [
@@ -499,15 +502,24 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
       getField(inventory, "Equip_ID", "Equipment_ID", "EquipId"),
     ] as const] : [];
   }));
-  const userNames = new Map(users.map((account) => [
+  const userDetails = new Map(users.map((account) => [
     getField(account, "User_ID", "UserId", "ID"),
-    [
-      getField(account, "Rank"),
-      getField(account, "First_Name", "FirstName"),
-      getField(account, "Last_Name", "LastName"),
-    ].filter(Boolean).join(" "),
+    {
+      name: [
+        getField(account, "Rank"),
+        getField(account, "First_Name", "FirstName"),
+        getField(account, "Last_Name", "LastName"),
+      ].filter(Boolean).join(" "),
+      phone: getField(account, "Phone", "Phone_Number"),
+      email: getField(account, "Gmail", "Recovery_Gmail", "Recovery_Email") || getField(account, "Email"),
+    },
   ]));
-
+  const returnUsers = new Map(audits
+    .filter((audit) => getField(audit, "Action_Type", "Action").toUpperCase() === "RETURN")
+    .map((audit) => [
+      getField(audit, "Target_ID", "Record_ID", "Tx_ID"),
+      getField(audit, "User_ID", "UserId"),
+    ]));
   const rawTransactionHistory: UserHistoryItem[] = transactions
     .filter((transaction) =>
       getField(transaction, "Owner_Company_ID", "OwnerCompanyId") === user.companyId ||
@@ -522,10 +534,13 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
         "";
       const ownerCompanyId = getField(transaction, "Owner_Company_ID", "OwnerCompanyId");
       const borrowerCompanyId = getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId");
-      const transactionUserId = getField(transaction, "User_ID", "UserId");
       const status = getField(transaction, "Status") || "Unknown";
       const movementType = status.toLowerCase() === "returned" ? "return" : "borrow";
       const transactionId = getField(transaction, "Tx_ID", "Transaction_ID", "TransactionId", "ID") || `TX-${index}`;
+      const transactionUserId = movementType === "return"
+        ? getField(transaction, "Return_User_ID", "Returned_By_User_ID") || returnUsers.get(transactionId) || getField(transaction, "User_ID", "UserId")
+        : getField(transaction, "User_ID", "UserId");
+      const transactionUser = userDetails.get(transactionUserId);
       const generatedGroupId = transactionId.match(/^(TX-\d{8}-[A-F0-9]+)-\d+$/i)?.[1];
       const groupId = getField(transaction, "Group_Tx_ID", "Borrow_Batch_ID") || generatedGroupId || transactionId;
       const equipmentName = equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์";
@@ -541,7 +556,9 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
           quantity,
           plateNumber: getField(transaction, "Plate_Number", "PlateNumber") || undefined,
         }],
-        borrowerName: userNames.get(transactionUserId) || transactionUserId || "ไม่ระบุผู้ทำรายการ",
+        borrowerName: transactionUser?.name || transactionUserId || "ไม่ระบุผู้ทำรายการ",
+        contactPhone: transactionUser?.phone || "",
+        contactEmail: transactionUser?.email || "",
         quantity,
         ownerCompanyName: companyNames.get(ownerCompanyId) || ownerCompanyId,
         borrowerCompanyName: companyNames.get(borrowerCompanyId) || borrowerCompanyId,
@@ -599,6 +616,7 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
         getField(inventory ?? {}, "Equip_ID", "Equipment_ID", "EquipId");
       const companyId = getField(inventory ?? {}, "Company_ID", "CompanyId");
       const transactionUserId = getField(record, "User_ID", "UserId");
+      const transactionUser = userDetails.get(transactionUserId);
       return {
         id: getField(record, "Maint_ID", "Maintenance_ID", "ID") || `MNT-${index}`,
         transactionIds: [],
@@ -609,7 +627,9 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
           name: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์",
           quantity: getNumber(record, "Qty", "Quantity"),
         }],
-        borrowerName: userNames.get(transactionUserId) || transactionUserId || "ไม่ระบุผู้ทำรายการ",
+        borrowerName: transactionUser?.name || transactionUserId || "ไม่ระบุผู้ทำรายการ",
+        contactPhone: transactionUser?.phone || "",
+        contactEmail: transactionUser?.email || "",
         quantity: getNumber(record, "Qty", "Quantity"),
         ownerCompanyName: companyNames.get(companyId) || companyId || "-",
         borrowerCompanyName: companyNames.get(companyId) || companyId || "-",

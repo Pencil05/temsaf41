@@ -1,6 +1,7 @@
 import "server-only";
 
 import { google } from "googleapis";
+import { getAccountById } from "@/lib/account-service";
 import type { SessionUser } from "@/lib/auth-session";
 import { withSheetsMutationLock } from "@/lib/sheets-mutation-lock";
 
@@ -17,6 +18,8 @@ const pendingTableReads = new Map<string, Promise<Table>>();
 export type DashboardActionData = {
   userName: string;
   companyName: string;
+  contactPhone: string;
+  contactEmail: string;
   companies: Array<{ id: string; name: string }>;
   returns: Array<{ transactionId: string; name: string; quantity: number; ownerCompanyId: string; ownerCompanyName: string }>;
   defects: Array<{ sourceType: "inventory" | "borrowed"; sourceId: string; name: string; maximum: number; label: string }>;
@@ -155,8 +158,9 @@ function inferLegacySourceInventory(transaction: Row, inventories: Row[]) {
 }
 
 export async function getDashboardActionData(user: SessionUser): Promise<DashboardActionData> {
-  const [companiesTable, equipmentTable, inventories, transactions] = await Promise.all([
+  const [companiesTable, equipmentTable, inventories, transactions, account] = await Promise.all([
     readTable("Companies"), readEquipmentTable(), readTable("Inventories"), readTable("Transactions"),
+    getAccountById(user.userId),
   ]);
   const companies = companiesTable.rows.map(({ record }) => ({
     id: value(record, "Company_ID", "CompanyId", "ID"),
@@ -210,6 +214,8 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
   return {
     userName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
     companyName: companyNames.get(user.companyId) || user.companyId,
+    contactPhone: account?.phone || "",
+    contactEmail: account?.gmail || account?.email || user.email,
     companies,
     returns,
     defects,
@@ -278,6 +284,8 @@ export async function returnEquipment(
     ];
     const returnDateColumn = column(transactions.headers, "Return_Date", "Returned_At");
     if (returnDateColumn >= 0) updates.push(cell(transactions, transaction.rowNumber, returnDateColumn, now));
+    const returnUserColumn = column(transactions.headers, "Return_User_ID", "Returned_By_User_ID");
+    if (returnUserColumn >= 0) updates.push(cell(transactions, transaction.rowNumber, returnUserColumn, user.userId));
     updates.push(append(audits, rowValues(audits.headers, [
       { aliases: ["Log_ID", "Audit_ID", "ID"], value: `AUD-${crypto.randomUUID()}` },
       { aliases: ["Timestamp", "Created_At", "Date"], value: now },

@@ -1,10 +1,11 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, RotateCcw, Wrench, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileImage, FileText, RotateCcw, Wrench, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
+import { receiptCanvas } from "@/lib/client-media";
 import type { DashboardActionData } from "@/lib/inventory-action-service";
 
 type Mode = "return" | "defect" | null;
@@ -22,6 +23,11 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [returnReview, setReturnReview] = useState(false);
+  const [returnCompleted, setReturnCompleted] = useState(false);
+  const [returnCompletedAt, setReturnCompletedAt] = useState("");
+  const [receiptDownloading, setReceiptDownloading] = useState(false);
+  const [returnDownloadOpen, setReturnDownloadOpen] = useState(false);
+  const returnReceiptRef = useRef<HTMLDivElement>(null);
 
   const defect = data.defects.find((item) => `${item.sourceType}:${item.sourceId}` === defectKey);
   const selectedReturn = data.returns.find((item) => item.transactionId === transactionId);
@@ -63,7 +69,6 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
       return;
     }
 
-    closeMode();
     setReturnReview(true);
   }
 
@@ -87,8 +92,43 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
       return;
     }
 
-    setReturnReview(false);
+    setReturnCompleted(true);
+    setReturnCompletedAt(new Date().toISOString());
     setMessage({ type: "success", text: "คืนยุทโธปกรณ์เรียบร้อยแล้ว" });
+  }
+
+  async function downloadReturnReceipt(format: "jpg" | "pdf") {
+    if (!returnReceiptRef.current || !selectedReturn) return;
+    setReceiptDownloading(true);
+    try {
+      const image = await receiptCanvas(returnReceiptRef.current);
+      if (format === "jpg") {
+        const link = document.createElement("a");
+        link.download = `RETURN-${selectedReturn.transactionId}.jpg`;
+        link.href = image.toDataURL("image/jpeg", 0.95);
+        link.click();
+      } else {
+        const { jsPDF } = await import("jspdf");
+        const document = new jsPDF();
+        const width = 186;
+        document.addImage(image.toDataURL("image/jpeg", 0.95), "JPEG", 12, 12, width, image.height * width / image.width);
+        document.save(`RETURN-${selectedReturn.transactionId}.pdf`);
+      }
+      setReturnDownloadOpen(false);
+    } catch {
+      setMessage({ type: "error", text: "ไม่สามารถสร้างไฟล์ใบเสร็จได้ กรุณาลองใหม่อีกครั้ง" });
+    } finally {
+      setReceiptDownloading(false);
+    }
+  }
+
+  function closeCompletedReturn() {
+    setReturnReview(false);
+    setReturnCompleted(false);
+    setReturnCompletedAt("");
+    setReturnDownloadOpen(false);
+    setTransactionId("");
+    closeMode();
     router.refresh();
   }
 
@@ -132,6 +172,7 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
       {submitting && (
         <ActionLoadingOverlay message={mode === "return" ? "กำลังคืนยุทโธปกรณ์และปรับยอดคลัง..." : "กำลังบันทึกการแจ้งเสีย..."} />
       )}
+      {receiptDownloading && <ActionLoadingOverlay message="กำลังสร้างไฟล์ใบเสร็จ..." />}
 
       {message && (
         <div
@@ -171,7 +212,7 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
         </button>
       </section>
 
-      {mode === "return" && (
+      {mode === "return" && !returnReview && (
         <Modal title="คืนยุทโธปกรณ์" onClose={closeMode}>
           <form onSubmit={submitReturn} className="space-y-4">
             <label className="block">
@@ -292,22 +333,34 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
         <div className="popup-backdrop fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
           <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 px-1">
-              <p className="font-bold text-slate-800">ตรวจก่อนยืนยันการคืน</p>
-              <p className="text-xs text-slate-500">ระบบจะยังไม่ปรับยอดคลังจนกว่าจะกดยืนยันครั้งสุดท้าย</p>
+              <p className="font-bold text-slate-800">{returnCompleted ? "ใบเสร็จการคืนยุทโธปกรณ์" : "ตรวจก่อนยืนยันการคืน"}</p>
+              <p className="text-xs text-slate-500">{returnCompleted ? "ตรวจสอบและดาวน์โหลดใบเสร็จก่อนปิดหน้าต่าง" : "ระบบจะยังไม่ปรับยอดคลังจนกว่าจะกดยืนยันครั้งสุดท้าย"}</p>
             </div>
 
+            {returnCompleted && (
+              <div className="mb-3 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">
+                <CheckCircle2 className="size-5" />
+                บันทึกการคืนเรียบร้อยแล้ว เลือกดาวน์โหลดใบเสร็จหรือกดปิด
+              </div>
+            )}
+
+            <div ref={returnReceiptRef}>
             <ReceiptDocument
-              title="สลิปตรวจสอบการคืนยุทโธปกรณ์"
+              title={returnCompleted ? "รายละเอียดการคืนยุทโธปกรณ์" : "สลิปตรวจสอบการคืนยุทโธปกรณ์"}
               referenceId={selectedReturn.transactionId}
-              status="รอยืนยันการคืน"
-              date={new Date().toISOString()}
+              status={returnCompleted ? "คืนแล้ว" : "รอยืนยันการคืน"}
+              date={returnCompletedAt || new Date().toISOString()}
               operatorName={data.userName}
+              contactPhone={data.contactPhone}
+              contactEmail={data.contactEmail}
               ownerCompanyName={data.companyName}
               borrowerCompanyName={selectedReturn.ownerCompanyName}
               note="คืนไปยังหน่วยเจ้าของเดิม"
               items={[{ name: selectedReturn.name, quantity: Number(returnQuantity) }]}
             />
+            </div>
 
+            {!returnCompleted && (
             <div className="mt-4 grid grid-cols-2 gap-3">
               <button
                 type="button"
@@ -328,6 +381,29 @@ export function DashboardActions({ data, initialMode = null }: { data: Dashboard
               >
                 {submitting ? "กำลังบันทึก..." : "ยืนยันการคืน"}
               </button>
+            </div>
+            )}
+
+            {returnCompleted && (
+              <div className="mt-4 flex gap-3">
+                <button type="button" onClick={closeCompletedReturn} disabled={receiptDownloading} className="h-12 flex-1 rounded-full bg-white font-bold text-slate-600">ปิด</button>
+                <button type="button" onClick={() => setReturnDownloadOpen(true)} disabled={receiptDownloading} className="grid size-12 place-items-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200 disabled:opacity-60" aria-label="ดาวน์โหลดใบเสร็จ"><Download className="size-5" /></button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {returnDownloadOpen && returnCompleted && selectedReturn && (
+        <div className="popup-backdrop fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/45 p-6 backdrop-blur-sm" role="dialog" aria-modal="true">
+          <div className="popup-panel w-full max-w-xs rounded-[26px] bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold">ดาวน์โหลดใบเสร็จ</h3>
+              <button type="button" onClick={() => setReturnDownloadOpen(false)} className="grid size-9 place-items-center rounded-full bg-slate-100"><X className="size-5 text-slate-500" /></button>
+            </div>
+            <div className="mt-4 space-y-3">
+              <button type="button" onClick={() => downloadReturnReceipt("jpg")} disabled={receiptDownloading} className="flex w-full items-center gap-3 rounded-2xl bg-blue-50 p-4 text-left font-semibold text-blue-700 disabled:opacity-60"><FileImage className="size-5" />ดาวน์โหลดเป็นไฟล์รูป (JPG)</button>
+              <button type="button" onClick={() => downloadReturnReceipt("pdf")} disabled={receiptDownloading} className="flex w-full items-center gap-3 rounded-2xl bg-red-50 p-4 text-left font-semibold text-red-700 disabled:opacity-60"><FileText className="size-5" />ดาวน์โหลดเป็นไฟล์ PDF</button>
             </div>
           </div>
         </div>

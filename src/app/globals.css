@@ -269,6 +269,18 @@ html[data-theme="dark"] .equipment-selection-item.is-selected {
   border-color: #5e6ad2 !important;
 }
 
+.equipment-selection-list {
+  background-color: #ffffff;
+}
+
+.equipment-selection-list .equipment-selection-item {
+  box-shadow: 0 7px 18px rgba(15, 23, 42, 0.08);
+}
+
+html[data-theme="dark"] .equipment-selection-list {
+  background-color: #0f1011;
+}
+
 html[data-theme="dark"] .group:hover .group-hover\:text-white,
 html[data-theme="dark"] .group:active .group-active\:text-white {
   color: #ffffff !important;

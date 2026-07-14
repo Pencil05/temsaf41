@@ -1,6 +1,7 @@
 import "server-only";
 
 import { google } from "googleapis";
+import { getAccountById } from "@/lib/account-service";
 import type { SessionUser } from "@/lib/auth-session";
 import { withSheetsMutationLock } from "@/lib/sheets-mutation-lock";
 
@@ -36,6 +37,8 @@ export type BorrowCompany = {
 export type BorrowPageData = {
   ownerCompanyName: string;
   borrowerName: string;
+  contactPhone: string;
+  contactEmail: string;
   inventory: BorrowInventoryItem[];
   companies: BorrowCompany[];
 };
@@ -49,6 +52,8 @@ export type CategoryInventoryData = {
   category: string;
   companyName: string;
   borrowerName: string;
+  contactPhone: string;
+  contactEmail: string;
   inventory: CategoryInventoryItem[];
   companies: BorrowCompany[];
 };
@@ -66,6 +71,8 @@ export type BorrowReceipt = {
   txId: string;
   date: string;
   borrowerName: string;
+  contactPhone: string;
+  contactEmail: string;
   borrowerCompanyName: string;
   ownerCompanyName: string;
   dueDate: string;
@@ -206,10 +213,11 @@ function createTxId() {
 }
 
 export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageData> {
-  const [companiesTable, equipmentTable, inventoriesTable] = await Promise.all([
+  const [companiesTable, equipmentTable, inventoriesTable, account] = await Promise.all([
     getSheetTable("Companies"),
     getEquipmentTable(),
     getSheetTable("Inventories"),
+    getAccountById(user.userId),
   ]);
   const equipmentById = new Map(
     equipmentTable.rows.map(({ record }) => [
@@ -247,6 +255,8 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
   return {
     ownerCompanyName: companies.find((company) => company.id === user.companyId)?.name || "หน่วยงานของคุณ",
     borrowerName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+    contactPhone: account?.phone || "",
+    contactEmail: account?.gmail || account?.email || user.email,
     companies: companies.filter((company) => company.id !== user.companyId),
     inventory,
   };
@@ -256,10 +266,11 @@ export async function getCategoryInventoryData(
   user: SessionUser,
   categoryName: string,
 ): Promise<CategoryInventoryData> {
-  const [companiesTable, equipmentTable, inventoriesTable] = await Promise.all([
+  const [companiesTable, equipmentTable, inventoriesTable, account] = await Promise.all([
     getSheetTable("Companies"),
     getEquipmentTable(),
     getSheetTable("Inventories"),
+    getAccountById(user.userId),
   ]);
   const companies = companiesTable.rows
     .map(({ record }) => ({
@@ -302,6 +313,8 @@ export async function getCategoryInventoryData(
     category: categoryName,
     companyName: companies.find((company) => company.id === user.companyId)?.name || "หน่วยงานของคุณ",
     borrowerName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+    contactPhone: account?.phone || "",
+    contactEmail: account?.gmail || account?.email || user.email,
     companies: companies.filter((company) => company.id !== user.companyId),
     inventory,
   };
@@ -327,12 +340,13 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       throw new BorrowValidationError("รูปหลักฐานไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");
     }
 
-    const [companiesTable, equipmentTable, inventoriesTable, transactionsTable, auditTable] = await Promise.all([
+    const [companiesTable, equipmentTable, inventoriesTable, transactionsTable, auditTable, account] = await Promise.all([
       getSheetTable("Companies"),
       getEquipmentTable(),
       getSheetTable("Inventories"),
       getSheetTable("Transactions"),
       getSheetTable("Audit_Log"),
+      getAccountById(user.userId),
     ]);
     const borrowerCompany = companiesTable.rows.find(
       ({ record }) => getField(record, "Company_ID", "CompanyId", "ID") === input.borrowerCompanyId,
@@ -538,6 +552,8 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       txId,
       date: now.toISOString(),
       borrowerName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+      contactPhone: account?.phone || "",
+      contactEmail: account?.gmail || account?.email || user.email,
       borrowerCompanyName:
         getField(borrowerCompany.record, "Company_Name", "CompanyName", "Name") || input.borrowerCompanyId,
       ownerCompanyName: companyNameById.get(user.companyId) || user.companyId,

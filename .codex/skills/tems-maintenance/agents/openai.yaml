@@ -1,0 +1,4 @@
+interface:
+  display_name: "TEMS Maintenance"
+  short_description: "Maintain TEMS Next.js and Google Sheets flows"
+  default_prompt: "Use $tems-maintenance to implement and verify a focused TEMS change."

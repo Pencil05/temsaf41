@@ -111,6 +111,8 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
       txId: "รอยืนยันการบันทึก",
       date: new Date().toISOString(),
       borrowerName: data.borrowerName,
+      contactPhone: data.contactPhone,
+      contactEmail: data.contactEmail,
       borrowerCompanyName: destinationName,
       ownerCompanyName: data.companyName,
       dueDate: parsedDueDate.toISOString(),
@@ -290,7 +292,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
         <div className="popup-backdrop fixed inset-0 z-[95] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
           <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 px-1"><p className="font-bold text-slate-800">ตรวจสอบก่อนบันทึก</p><p className="text-xs text-slate-500">ระบบจะหักยอดคลังหลังจากกดยืนยันด้านล่างเท่านั้น</p></div>
-            <ReceiptDocument title="สลิปตรวจสอบการเบิกยุทโธปกรณ์" referenceId={reviewReceipt.txId} status="รอยืนยัน" date={reviewReceipt.date} operatorName={reviewReceipt.borrowerName} ownerCompanyName={reviewReceipt.ownerCompanyName} borrowerCompanyName={reviewReceipt.borrowerCompanyName} dueDate={reviewReceipt.dueDate} note={reviewReceipt.note} evidenceImage={reviewReceipt.evidenceImage} items={reviewReceipt.items} />
+            <ReceiptDocument title="สลิปตรวจสอบการเบิกยุทโธปกรณ์" referenceId={reviewReceipt.txId} status="รอยืนยัน" date={reviewReceipt.date} operatorName={reviewReceipt.borrowerName} contactPhone={data.contactPhone} contactEmail={data.contactEmail} ownerCompanyName={reviewReceipt.ownerCompanyName} borrowerCompanyName={reviewReceipt.borrowerCompanyName} dueDate={reviewReceipt.dueDate} note={reviewReceipt.note} evidenceImage={reviewReceipt.evidenceImage} items={reviewReceipt.items} />
             <div className="mt-4 grid grid-cols-2 gap-3"><button type="button" onClick={() => setReviewReceipt(null)} disabled={isSubmitting} className="h-12 rounded-full bg-white font-bold text-slate-600">ย้อนกลับแก้ไข</button><button type="button" onClick={confirmBorrow} disabled={isSubmitting} className="h-12 rounded-full bg-emerald-600 font-bold text-white disabled:opacity-60">{isSubmitting ? "กำลังบันทึก..." : "ยืนยันการเบิก"}</button></div>
           </div>
         </div>
@@ -299,7 +301,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
       {receipt && (
         <div className="popup-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
           <div className="popup-panel w-full max-w-md rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
-            <div ref={receiptRef}><ReceiptDocument title="รายละเอียดการเบิกยุทโธปกรณ์" referenceId={receipt.txId} status="บันทึกการเบิกแล้ว" date={receipt.date} operatorName={receipt.borrowerName} ownerCompanyName={receipt.ownerCompanyName} borrowerCompanyName={receipt.borrowerCompanyName} dueDate={receipt.dueDate} note={receipt.note} evidenceImage={receipt.evidenceImage} items={receipt.items} /></div>
+            <div ref={receiptRef}><ReceiptDocument title="รายละเอียดการเบิกยุทโธปกรณ์" referenceId={receipt.txId} status="บันทึกการเบิกแล้ว" date={receipt.date} operatorName={receipt.borrowerName} contactPhone={receipt.contactPhone} contactEmail={receipt.contactEmail} ownerCompanyName={receipt.ownerCompanyName} borrowerCompanyName={receipt.borrowerCompanyName} dueDate={receipt.dueDate} note={receipt.note} evidenceImage={receipt.evidenceImage} items={receipt.items} /></div>
             <div className="mt-4 flex gap-3"><button type="button" onClick={() => setReceipt(null)} className="h-12 flex-1 rounded-full bg-white font-bold text-slate-600">ปิด</button><button type="button" onClick={() => setDownloadMenuOpen(true)} className="grid size-12 place-items-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200" aria-label="ดาวน์โหลด"><Download className="size-5" /></button></div>
           </div>
         </div>

@@ -10,6 +10,8 @@ export function ReceiptDocument({
   status,
   date,
   operatorName,
+  contactPhone,
+  contactEmail,
   ownerCompanyName,
   borrowerCompanyName,
   dueDate,
@@ -22,6 +24,8 @@ export function ReceiptDocument({
   status: string;
   date: string;
   operatorName: string;
+  contactPhone?: string;
+  contactEmail?: string;
   ownerCompanyName?: string;
   borrowerCompanyName?: string;
   dueDate?: string;
@@ -49,6 +53,13 @@ export function ReceiptDocument({
         <p style={{ margin: 0 }}><strong>สถานะ:</strong> {status}</p>
         <p style={{ margin: 0 }}><strong>วันที่ทำรายการ:</strong> {formatDate(date)}</p>
         <p style={{ margin: 0 }}><strong>ผู้ทำรายการ:</strong> {operatorName || "-"}</p>
+        {(contactPhone || contactEmail) && (
+          <div style={{ marginTop: 2, borderRadius: 12, background: "#f8fafc", padding: 12 }}>
+            <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700 }}>ช่องทางการติดต่อ</p>
+            <p style={{ margin: "0 0 4px", fontSize: 12 }}><strong>เบอร์โทร:</strong> {contactPhone || "-"}</p>
+            <p style={{ margin: 0, fontSize: 12 }}><strong>อีเมล:</strong> {contactEmail || "-"}</p>
+          </div>
+        )}
         {ownerCompanyName && <p style={{ margin: 0 }}><strong>หน่วยต้นทาง:</strong> {ownerCompanyName}</p>}
         {borrowerCompanyName && <p style={{ margin: 0 }}><strong>หน่วยปลายทาง:</strong> {borrowerCompanyName}</p>}
         {dueDate && <p style={{ margin: 0, color: "#b91c1c" }}><strong>กำหนดส่งคืน:</strong> {formatDate(dueDate)}</p>}
@@ -58,7 +69,7 @@ export function ReceiptDocument({
         <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700 }}>รายการยุทโธปกรณ์</p>
         {items.map((item, index) => (
           <div key={`${item.name}-${item.plateNumber || index}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 0", borderBottom: "1px solid #e2e8f0", fontSize: 12 }}>
-            <span>{index + 1}. {item.name}{item.plateNumber ? ` · ทะเบียน ${item.plateNumber}` : ""}</span>
+            <span>{index + 1}. {item.name}{item.plateNumber ? ` ทะเบียน ${item.plateNumber}` : ""}</span>
             <strong>{item.quantity.toLocaleString("th-TH")}</strong>
           </div>
         ))}
@@ -76,3 +87,4 @@ export function ReceiptDocument({
     </div>
   );
 }
+

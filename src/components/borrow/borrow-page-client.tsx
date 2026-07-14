@@ -145,6 +145,8 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       txId: "รอยืนยันการบันทึก",
       date: new Date().toISOString(),
       borrowerName: data.borrowerName,
+      contactPhone: data.contactPhone,
+      contactEmail: data.contactEmail,
       borrowerCompanyName,
       ownerCompanyName: data.ownerCompanyName,
       dueDate: new Date(dueDate).toISOString(),
@@ -281,7 +283,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-6">
           <section className="rounded-[26px] border border-white/80 bg-white/75 p-4 shadow-[0_12px_36px_rgba(15,23,42,0.07)] backdrop-blur-xl sm:p-6">
-            <div className="flex items-end justify-between gap-4">
+            <div className="flex items-end justify-between gap-4 ">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-600">Step 1</p>
                 <h2 className="mt-1 text-lg font-bold">เลือกยุทโธปกรณ์</h2>
@@ -291,7 +293,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
               </span>
             </div>
 
-            <div className="mt-4 max-h-[32rem] space-y-3 overflow-y-auto overscroll-contain pr-1">
+            <div className="mt-4 max-h-[32rem] space-y-3 overflow-y-auto overscroll-contain pr-1 bg-white">
               {data.inventory.length ? (
                 data.inventory.map((item) => {
                   const isSelected = selected[item.selectionId] !== undefined;
@@ -464,7 +466,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
         <div className="popup-backdrop fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true">
           <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 px-1"><p className="font-bold text-slate-800">ตรวจสอบก่อนบันทึก</p><p className="text-xs text-slate-500">โปรดตรวจข้อมูลให้ครบถ้วน ระบบยังไม่บันทึกรายการในขั้นตอนนี้</p></div>
-            <ReceiptDocument title="สลิปตรวจสอบการเบิกยุทโธปกรณ์" referenceId={reviewReceipt.txId} status="รอยืนยัน" date={reviewReceipt.date} operatorName={reviewReceipt.borrowerName} ownerCompanyName={reviewReceipt.ownerCompanyName} borrowerCompanyName={reviewReceipt.borrowerCompanyName} dueDate={reviewReceipt.dueDate} note={reviewReceipt.note} evidenceImage={reviewReceipt.evidenceImage} items={reviewReceipt.items} />
+            <ReceiptDocument title="สลิปตรวจสอบการเบิกยุทโธปกรณ์" referenceId={reviewReceipt.txId} status="รอยืนยัน" date={reviewReceipt.date} operatorName={reviewReceipt.borrowerName} contactPhone={reviewReceipt.contactPhone} contactEmail={reviewReceipt.contactEmail} ownerCompanyName={reviewReceipt.ownerCompanyName} borrowerCompanyName={reviewReceipt.borrowerCompanyName} dueDate={reviewReceipt.dueDate} note={reviewReceipt.note} evidenceImage={reviewReceipt.evidenceImage} items={reviewReceipt.items} />
             <div className="mt-4 grid grid-cols-2 gap-3"><button type="button" onClick={() => setReviewReceipt(null)} disabled={isSubmitting} className="h-12 rounded-full bg-white font-bold text-slate-600">ย้อนกลับแก้ไข</button><button type="button" onClick={confirmBorrow} disabled={isSubmitting} className="h-12 rounded-full bg-emerald-600 font-bold text-white disabled:opacity-60">{isSubmitting ? "กำลังบันทึก..." : "ยืนยันการเบิก"}</button></div>
           </div>
         </div>
@@ -488,7 +490,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
               </button>
             </div>
 
-            <div ref={receiptRef}><ReceiptDocument title="รายละเอียดการเบิกยุทโธปกรณ์" referenceId={receipt.txId} status="บันทึกการเบิกแล้ว" date={receipt.date} operatorName={receipt.borrowerName} ownerCompanyName={receipt.ownerCompanyName} borrowerCompanyName={receipt.borrowerCompanyName} dueDate={receipt.dueDate} note={receipt.note} evidenceImage={receipt.evidenceImage} items={receipt.items} /></div>
+            <div ref={receiptRef}><ReceiptDocument title="รายละเอียดการเบิกยุทโธปกรณ์" referenceId={receipt.txId} status="บันทึกการเบิกแล้ว" date={receipt.date} operatorName={receipt.borrowerName} contactPhone={receipt.contactPhone} contactEmail={receipt.contactEmail} ownerCompanyName={receipt.ownerCompanyName} borrowerCompanyName={receipt.borrowerCompanyName} dueDate={receipt.dueDate} note={receipt.note} evidenceImage={receipt.evidenceImage} items={receipt.items} /></div>
 
             <div className="mt-4 flex gap-3"><button type="button" onClick={() => setReceipt(null)} className="h-12 flex-1 rounded-full bg-white font-bold text-slate-600">ปิด</button><button type="button" onClick={() => setDownloadMenuOpen(true)} className="grid size-12 place-items-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200" aria-label="ดาวน์โหลดใบเสร็จ"><Download className="size-5" /></button></div>
           </div>

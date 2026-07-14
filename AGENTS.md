@@ -1,5 +1,8 @@
-<!-- BEGIN:nextjs-agent-rules -->
-# This is NOT the Next.js you know
+# TEMS Agent Rules
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
-<!-- END:nextjs-agent-rules -->
+- For TEMS development, read `.codex/skills/tems-maintenance/SKILL.md` once per task.
+- Search with `rg` and inspect only relevant ranges; do not reread whole files after patches.
+- Preserve unrelated user changes in this dirty worktree.
+- This is Next.js 16. Before changing framework behavior, read only the relevant guide under `node_modules/next/dist/docs/`.
+- Keep Google credentials and Gmail App Passwords server-only. Never print secret values.
+- Validate focused files first, then run `npx tsc --noEmit` and the production build for cross-cutting changes.
