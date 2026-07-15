@@ -123,10 +123,10 @@ export function AdminAiAssistant() {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48_000 } });
       const preferredTypes = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
       const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type)) || "";
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType, audioBitsPerSecond: 64_000 } : undefined);
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType, audioBitsPerSecond: 128_000 } : undefined);
       const chunks: BlobPart[] = [];
       recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
       recorder.onstop = async () => {
@@ -176,7 +176,7 @@ export function AdminAiAssistant() {
         const speechThreshold = Math.min(0.08, Math.max(0.018, noiseFloor * 2.4));
         if (rms > speechThreshold) { loudFrames += 1; if (loudFrames >= 3) { heardSpeech = true; lastSpeechAt = now; } }
         else loudFrames = 0;
-        if ((heardSpeech && now - lastSpeechAt > 1_150) || now - startedAt > 15_000) { stopMicrophone(); return; }
+        if ((heardSpeech && now - lastSpeechAt > 1_600) || now - startedAt > 20_000) { stopMicrophone(); return; }
         monitorFrameRef.current = requestAnimationFrame(monitor);
       };
       setInput("");
