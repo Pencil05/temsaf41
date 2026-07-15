@@ -85,7 +85,7 @@ function resolvedAuditDetails(raw: string, companyNames: Map<string, string>, in
   if (!raw) return "ไม่มีรายละเอียดเพิ่มเติม";
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "add-inventory": "เพิ่มรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
+    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "add-inventory": "เพิ่มรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
     return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage"].includes(key) && !key.toLowerCase().includes("password")).map(([key, rawValue]) => {
       const value = String(rawValue || "-");
       if (key === "action") return `คำสั่ง: ${actionNames[value] || value}`;
@@ -163,7 +163,7 @@ export async function getAdminData(): Promise<AdminData> {
     table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log"),
   ]);
   const pictureUpdates: Update[] = [];
-  const equipmentsTable = withColumns(equipmentSource, ["Picture"], pictureUpdates);
+  const equipmentsTable = withColumns(equipmentSource, ["Picture", "Is_Active"], pictureUpdates);
   const pictureColumn = requireColumn(equipmentsTable, "Picture");
   equipmentsTable.rows.forEach((row) => { if (!field(row.record, "Picture")) pictureUpdates.push(cell(equipmentsTable, row.rowNumber, pictureColumn, getEquipmentImage(field(row.record, "Equip_Name")))); });
   if (pictureUpdates.length) await write(pictureUpdates);
@@ -181,7 +181,7 @@ export async function getAdminData(): Promise<AdminData> {
   const transactionById = new Map(transactionsTable.rows.map(({ record }) => [field(record, "Tx_ID"), record]));
 
   const users = usersTable.rows.map(({ record }) => ({ id: field(record, "User_ID"), companyId: field(record, "Company_ID"), companyName: companyNames.get(field(record, "Company_ID")) || "-", role: field(record, "Role"), rank: field(record, "Rank"), firstName: field(record, "First_Name"), lastName: field(record, "Last_Name"), email: field(record, "Email"), phone: field(record, "Phone"), gmail: field(record, "Gmail") }));
-  const equipments = equipmentsTable.rows.map(({ record }) => { const name = field(record, "Equip_Name"); return { id: field(record, "Equip_ID"), name, category: field(record, "Category"), requirePlate: ["true", "1", "yes"].includes(field(record, "Require_Plate").toLowerCase()), picture: field(record, "Picture") || getEquipmentImage(name) }; });
+  const equipments = equipmentsTable.rows.filter(({ record }) => !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active", "Active", "Status").toLowerCase())).map(({ record }) => { const name = field(record, "Equip_Name"); return { id: field(record, "Equip_ID"), name, category: field(record, "Category"), requirePlate: ["true", "1", "yes"].includes(field(record, "Require_Plate").toLowerCase()), picture: field(record, "Picture") || getEquipmentImage(name) }; });
   const inventories = inventoriesTable.rows.map(({ record }) => {
     const equipmentId = field(record, "Equip_ID");
     return { id: field(record, "Inv_ID"), companyId: field(record, "Company_ID"), companyName: companyNames.get(field(record, "Company_ID")) || field(record, "Company_Name"), equipmentId, equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์", category: equipmentCategories.get(equipmentId) || "ไม่ระบุหมวดหมู่", plateNumber: field(record, "Plate_Number"), total: number(record, "Qty_Total"), available: number(record, "Qty_Available"), borrowed: number(record, "Qty_Borrowed"), broken: number(record, "Qty_Broken") };
@@ -234,7 +234,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
     const companies = withColumns(companySource, ["Is_Active"], updates);
     const logs = withColumns(logsSource, ["Details"], updates);
     let maintenance = maintenanceSource;
-    const equipments = withColumns(equipmentSource, ["Picture"], updates);
+    const equipments = withColumns(equipmentSource, ["Picture", "Is_Active"], updates);
     let target = String(input.id || "");
     let auditContext: Record<string, string> = {};
 
@@ -273,9 +273,24 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       const row = equipments.rows.find(({ record }) => field(record, "Equip_ID") === target);
       const picture = String(input.picture || "");
       if (picture.startsWith("data:image/") && picture.length > 45_000) throw new Error("รูปยุทโธปกรณ์มีขนาดใหญ่เกินไป");
-      const payload = { Equip_ID: target, Equip_Name: String(input.name || ""), Category: String(input.category || ""), Require_Plate: input.requirePlate ? "TRUE" : "FALSE", Picture: picture || getEquipmentImage(String(input.name || "")) };
+      const payload = { Equip_ID: target, Equip_Name: String(input.name || ""), Category: String(input.category || ""), Require_Plate: input.requirePlate ? "TRUE" : "FALSE", Picture: picture || getEquipmentImage(String(input.name || "")), Is_Active: "TRUE" };
       if (row) Object.entries(payload).slice(1).forEach(([key, value]) => updates.push(cell(equipments, row.rowNumber, requireColumn(equipments, key), value)));
       else updates.push(append(equipments, valuesFor(equipments, payload)));
+    } else if (action === "delete-equipment") {
+      const row = equipments.rows.find(({ record }) => field(record, "Equip_ID") === target);
+      if (!row) throw new Error("ไม่พบชนิดยุทโธปกรณ์ที่ต้องการลบ");
+      if (inventories.rows.some(({ record }) => field(record, "Equip_ID") === target && number(record, "Qty_Total") > 0)) throw new Error("ไม่สามารถลบยุทโธปกรณ์ที่ยังมียอดอยู่ในคลัง กรุณาเคลื่อนย้ายหรือลบยอดคลังก่อน");
+      updates.push(cell(equipments, row.rowNumber, requireColumn(equipments, "Is_Active"), "FALSE"));
+      auditContext = { equipmentName: field(row.record, "Equip_Name") };
+    } else if (action === "delete-equipment-category") {
+      const category = String(input.category || "").trim();
+      const rows = equipments.rows.filter(({ record }) => field(record, "Category") === category && !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active").toLowerCase()));
+      if (!category || !rows.length) throw new Error("ไม่พบหมวดหมู่ยุทโธปกรณ์ที่ต้องการลบ");
+      const equipmentIds = new Set(rows.map(({ record }) => field(record, "Equip_ID")));
+      if (inventories.rows.some(({ record }) => equipmentIds.has(field(record, "Equip_ID")) && number(record, "Qty_Total") > 0)) throw new Error("ไม่สามารถลบหมวดหมู่ที่ยังมียุทโธปกรณ์อยู่ในคลัง กรุณาจัดการยอดคลังก่อน");
+      rows.forEach((row) => updates.push(cell(equipments, row.rowNumber, requireColumn(equipments, "Is_Active"), "FALSE")));
+      target = `CATEGORY:${category}`;
+      auditContext = { equipmentName: category };
     } else if (action === "save-inventory" || action === "add-inventory") {
       const adding = action === "add-inventory";
       if (!adding && !target) throw new Error("กรุณาเลือกรายการในคลังที่ต้องการจัดการ");

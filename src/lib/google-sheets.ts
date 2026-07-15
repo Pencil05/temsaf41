@@ -329,7 +329,7 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
   const quantityByCategory = new Map<string, number>();
   const categoryNames = new Set<string>();
 
-  masterEquipments.forEach((equipment) => {
+  masterEquipments.filter((equipment) => !["false", "0", "deleted", "inactive"].includes(getField(equipment, "Is_Active", "Active", "Status").toLowerCase())).forEach((equipment) => {
     const category = getField(equipment, "Category", "Category_Name", "Equipment_Category", "Equip_Category").trim();
     if (category) {
       categoryNames.add(category);
@@ -444,7 +444,7 @@ export async function getGlobalEquipmentSearchItems(): Promise<GlobalSearchItem[
   const categories = new Map<string, GlobalSearchItem>();
   const items: GlobalSearchItem[] = [];
 
-  equipments.forEach((equipment, index) => {
+  equipments.filter((equipment) => !["false", "0", "deleted", "inactive"].includes(getField(equipment, "Is_Active", "Active", "Status").toLowerCase())).forEach((equipment, index) => {
     const equipmentId = getField(equipment, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId", "ID") || `EQ-${index}`;
     const name = getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name").trim();
     const category = getField(equipment, "Category", "Category_Name", "Equipment_Category", "Equip_Category").trim() || "อื่น ๆ";

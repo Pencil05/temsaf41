@@ -14,16 +14,15 @@ type AssistantResult = {
 };
 
 type ChatMessage = { role: "assistant" | "user"; text: string; context?: string };
-type RecognitionEvent = { resultIndex: number; results: ArrayLike<{ 0: { transcript: string }; isFinal?: boolean }> };
-type Recognition = { lang: string; interimResults: boolean; continuous: boolean; start: () => void; stop: () => void; onresult: ((event: RecognitionEvent) => void) | null; onerror: (() => void) | null; onend: (() => void) | null };
 
 export function AdminAiAssistant() {
   const router = useRouter();
   const listRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<Recognition | null>(null);
-  const voiceTranscriptRef = useRef("");
-  const voiceSilenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const voiceMaximumTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const discardRecordingRef = useRef(false);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const monitorFrameRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", text: "สวัสดีครับ ผมช่วยค้นหาข้อมูลและเตรียมคำสั่งจัดการระบบให้ได้ ทุกคำสั่งแก้ไขจะรอให้คุณยืนยันก่อนเสมอ" }]);
@@ -35,7 +34,7 @@ export function AdminAiAssistant() {
   const [adminPassword, setAdminPassword] = useState("");
 
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }); }, [messages, pending]);
-  useEffect(() => () => { recognitionRef.current?.stop(); if (voiceSilenceTimerRef.current) clearTimeout(voiceSilenceTimerRef.current); if (voiceMaximumTimerRef.current) clearTimeout(voiceMaximumTimerRef.current); }, []);
+  useEffect(() => () => { recorderRef.current?.stop(); mediaStreamRef.current?.getTracks().forEach((track) => track.stop()); if (monitorFrameRef.current) cancelAnimationFrame(monitorFrameRef.current); void audioContextRef.current?.close(); }, []);
 
   async function sendMessage(rawMessage: string) {
     const message = rawMessage.trim();
@@ -66,52 +65,98 @@ export function AdminAiAssistant() {
     void sendMessage(input);
   }
 
-  function clearVoiceTimers() {
-    if (voiceSilenceTimerRef.current) clearTimeout(voiceSilenceTimerRef.current);
-    if (voiceMaximumTimerRef.current) clearTimeout(voiceMaximumTimerRef.current);
-    voiceSilenceTimerRef.current = null;
-    voiceMaximumTimerRef.current = null;
+  function stopMicrophone() {
+    if (monitorFrameRef.current) cancelAnimationFrame(monitorFrameRef.current);
+    monitorFrameRef.current = null;
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   }
 
-  function finishVoice() {
-    const transcript = voiceTranscriptRef.current.trim();
-    voiceTranscriptRef.current = "";
-    clearVoiceTimers();
-    recognitionRef.current?.stop();
-    setListening(false);
-    if (transcript) void sendMessage(transcript);
+  function closeAssistant() {
+    discardRecordingRef.current = true;
+    stopMicrophone();
+    setOpen(false);
   }
 
-  function toggleMicrophone() {
-    if (listening) { finishVoice(); return; }
-    const RecognitionConstructor = (window as unknown as { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: new () => Recognition }).webkitSpeechRecognition;
-    if (!RecognitionConstructor) {
-      setMessages((current) => [...current, { role: "assistant", text: "เบราว์เซอร์นี้ไม่รองรับการรับเสียง กรุณาใช้ Chrome หรือพิมพ์คำสั่งแทน" }]);
+  function blobToBase64(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+      reader.onerror = () => reject(new Error("ไม่สามารถอ่านไฟล์เสียงได้"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function toggleMicrophone() {
+    if (listening) { stopMicrophone(); return; }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setMessages((current) => [...current, { role: "assistant", text: "เบราว์เซอร์นี้ไม่รองรับการอัดเสียง กรุณาใช้ Chrome, Edge หรือ Safari รุ่นล่าสุด" }]);
       return;
     }
-    const recognition = new RecognitionConstructor();
-    recognition.lang = "th-TH";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results).map((result) => result[0]?.transcript || "").join(" ").trim();
-      if (!transcript) return;
-      voiceTranscriptRef.current = transcript;
-      setInput(transcript);
-      if (voiceSilenceTimerRef.current) clearTimeout(voiceSilenceTimerRef.current);
-      const finalResult = event.results[event.results.length - 1]?.isFinal;
-      voiceSilenceTimerRef.current = setTimeout(finishVoice, finalResult ? 180 : 1_100);
-    };
-    recognition.onerror = () => { clearVoiceTimers(); voiceTranscriptRef.current = ""; setListening(false); };
-    recognition.onend = () => {
-      if (voiceTranscriptRef.current.trim()) finishVoice();
-      else { clearVoiceTimers(); setListening(false); }
-    };
-    recognitionRef.current = recognition;
-    voiceTranscriptRef.current = "";
-    setListening(true);
-    recognition.start();
-    voiceMaximumTimerRef.current = setTimeout(finishVoice, 12_000);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+      const preferredTypes = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
+      const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType, audioBitsPerSecond: 64_000 } : undefined);
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      recorder.onstop = async () => {
+        setListening(false);
+        stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        if (audioContextRef.current) await audioContextRef.current.close().catch(() => undefined);
+        audioContextRef.current = null;
+        if (discardRecordingRef.current) { discardRecordingRef.current = false; return; }
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size < 1_000) return;
+        setLoading(true);
+        try {
+          const audio = await blobToBase64(blob);
+          const apiMimeType = blob.type.includes("webm") ? "video/webm" : blob.type.includes("mp4") ? "video/mp4" : blob.type.split(";")[0];
+          const response = await fetch("/api/admin/assistant/transcribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audio, mimeType: apiMimeType }) });
+          const result = await response.json() as { transcript?: string; error?: string };
+          if (!response.ok || !result.transcript) throw new Error(result.error || "ถอดเสียงไม่สำเร็จ");
+          setInput(result.transcript);
+          setLoading(false);
+          await sendMessage(result.transcript);
+        } catch (error) {
+          setMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "ถอดเสียงไม่สำเร็จ" }]);
+        } finally { setLoading(false); }
+      };
+      recorderRef.current = recorder;
+      discardRecordingRef.current = false;
+      mediaStreamRef.current = stream;
+      const audioContext = new AudioContext();
+      audioContextRef.current = audioContext;
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      audioContext.createMediaStreamSource(stream).connect(analyser);
+      const samples = new Uint8Array(analyser.fftSize);
+      const startedAt = performance.now();
+      let noiseFloor = 0.008;
+      let heardSpeech = false;
+      let loudFrames = 0;
+      let lastSpeechAt = startedAt;
+      const monitor = () => {
+        analyser.getByteTimeDomainData(samples);
+        let energy = 0;
+        for (const sample of samples) { const normalized = (sample - 128) / 128; energy += normalized * normalized; }
+        const rms = Math.sqrt(energy / samples.length);
+        const now = performance.now();
+        if (now - startedAt < 500) noiseFloor = Math.max(noiseFloor, rms);
+        const speechThreshold = Math.min(0.08, Math.max(0.018, noiseFloor * 2.4));
+        if (rms > speechThreshold) { loudFrames += 1; if (loudFrames >= 3) { heardSpeech = true; lastSpeechAt = now; } }
+        else loudFrames = 0;
+        if ((heardSpeech && now - lastSpeechAt > 1_150) || now - startedAt > 15_000) { stopMicrophone(); return; }
+        monitorFrameRef.current = requestAnimationFrame(monitor);
+      };
+      setInput("");
+      setListening(true);
+      recorder.start(250);
+      monitorFrameRef.current = requestAnimationFrame(monitor);
+    } catch (error) {
+      setListening(false);
+      setMessages((current) => [...current, { role: "assistant", text: error instanceof Error && error.name === "NotAllowedError" ? "กรุณาอนุญาตการใช้ไมโครโฟนก่อน" : "ไม่สามารถเปิดไมโครโฟนได้" }]);
+    }
   }
 
   async function attachEvidence(event: ChangeEvent<HTMLInputElement>) {
@@ -151,9 +196,9 @@ export function AdminAiAssistant() {
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} className="fixed bottom-5 right-5 z-[70] flex h-14 items-center gap-2 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-4 font-bold text-white shadow-2xl transition hover:-translate-y-1 hover:shadow-blue-500/30" aria-label="เปิด AI ผู้ช่วย"><Sparkles className="size-5" /><span className="hidden sm:inline">AI ผู้ช่วย</span></button>
-      {open && <div className="fixed inset-0 z-[150] flex items-end justify-end bg-slate-950/30 p-0 backdrop-blur-sm sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+      {open && <div className="fixed inset-0 z-[150] flex items-end justify-end bg-slate-950/30 p-0 backdrop-blur-sm sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAssistant(); }}>
         <section className="popup-panel flex h-[min(760px,94dvh)] w-full flex-col overflow-hidden rounded-t-[28px] border border-blue-200 bg-white shadow-2xl sm:w-[430px] sm:rounded-[28px]">
-          <header className="flex items-center gap-3 bg-gradient-to-r from-[#103b68] to-[#1984c8] p-4 text-white"><span className="grid size-11 place-items-center rounded-2xl bg-white/15"><Bot className="size-6" /></span><span className="min-w-0 flex-1"><span className="block font-bold">TEMS AI ผู้ช่วยผู้ดูแล</span><span className="block text-xs text-blue-100">Gemini 3.1 Flash-Lite · จำบริบทการสนทนา</span></span><button type="button" onClick={() => setOpen(false)} className="grid size-10 place-items-center rounded-xl hover:bg-white/10"><X className="size-5" /></button></header>
+          <header className="flex items-center gap-3 bg-gradient-to-r from-[#103b68] to-[#1984c8] p-4 text-white"><span className="grid size-11 place-items-center rounded-2xl bg-white/15"><Bot className="size-6" /></span><span className="min-w-0 flex-1"><span className="block font-bold">TEMS AI ผู้ช่วยผู้ดูแล</span><span className="block text-xs text-blue-100">Gemini 3.1 Flash-Lite · จำบริบทการสนทนา</span></span><button type="button" onClick={closeAssistant} className="grid size-10 place-items-center rounded-xl hover:bg-white/10"><X className="size-5" /></button></header>
           <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
             {messages.map((message, index) => <div key={index} className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-6 ${message.role === "user" ? "ml-auto bg-blue-600 text-white" : "border border-slate-200 bg-white text-slate-700 shadow-sm"}`}>{message.text}</div>)}
             {loading && <div className="flex w-fit items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500"><Sparkles className="size-4 animate-pulse text-blue-600" />กำลังประมวลผล...</div>}

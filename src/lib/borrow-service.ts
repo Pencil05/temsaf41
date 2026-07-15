@@ -308,7 +308,8 @@ export async function getCategoryInventoryData(
   const inbound = inboundBorrowedByInventory(transactionsTable, inventoriesTable.rows, user.companyId);
   const inventory = equipmentTable.rows
     .filter(({ record }) =>
-      normalizedKey(getField(record, "Category", "Category_Name", "Equip_Category")) === normalizedKey(categoryName),
+      normalizedKey(getField(record, "Category", "Category_Name", "Equip_Category")) === normalizedKey(categoryName) &&
+      !["false", "0", "deleted", "inactive"].includes(getField(record, "Is_Active", "Active", "Status").toLowerCase()),
     )
     .flatMap(({ record: equipment }) => {
       const equipmentId = getField(equipment, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId", "ID");

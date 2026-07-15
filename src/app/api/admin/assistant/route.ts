@@ -5,7 +5,7 @@ import { readSessionValue, SESSION_COOKIE_NAME } from "@/lib/auth-session";
 
 const MODEL = "gemini-3.1-flash-lite";
 const allowedActions = new Set([
-  "save-company", "delete-company", "save-user", "delete-user", "save-equipment",
+  "save-company", "delete-company", "save-user", "delete-user", "save-equipment", "delete-equipment", "delete-equipment-category",
   "add-inventory", "save-inventory", "transfer-inventory", "delete-inventory",
   "return-transaction", "report-defect", "maintenance-status", "dispose-maintenance",
 ]);
@@ -73,6 +73,8 @@ export async function POST(request: Request) {
 - save-user: {action,id?,companyId,role,rank,firstName,lastName,email,phone?,gmail?,password?}
 - delete-user: {action,id}
 - save-equipment: {action,id?,name,category,requirePlate}
+- delete-equipment: {action,id}
+- delete-equipment-category: {action,category}
 - add-inventory: {action,companyId,equipmentId,plateNumber?,total}
 - save-inventory: {action,id,companyId,equipmentId,plateNumber?,total}
 - transfer-inventory: {action,sourceInventoryId,destinationCompanyId,quantity}
