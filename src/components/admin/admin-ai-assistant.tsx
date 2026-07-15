@@ -15,14 +15,38 @@ type AssistantResult = {
 
 type ChatMessage = { role: "assistant" | "user"; text: string; context?: string };
 
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  0: { transcript: string; confidence: number };
+};
+
+type SpeechRecognitionEventLike = Event & {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionErrorEventLike = Event & { error: string };
+
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
 export function AdminAiAssistant() {
   const router = useRouter();
   const listRef = useRef<HTMLDivElement>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const discardRecordingRef = useRef(false);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const monitorFrameRef = useRef<number | null>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const discardRecognitionRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", text: "สวัสดีครับ ผมช่วยค้นหาข้อมูลและเตรียมคำสั่งจัดการระบบให้ได้ ทุกคำสั่งแก้ไขจะรอให้คุณยืนยันก่อนเสมอ" }]);
@@ -34,7 +58,7 @@ export function AdminAiAssistant() {
   const [adminPassword, setAdminPassword] = useState("");
 
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }); }, [messages, pending]);
-  useEffect(() => () => { recorderRef.current?.stop(); mediaStreamRef.current?.getTracks().forEach((track) => track.stop()); if (monitorFrameRef.current) cancelAnimationFrame(monitorFrameRef.current); void audioContextRef.current?.close(); }, []);
+  useEffect(() => () => recognitionRef.current?.abort(), []);
 
   async function sendMessage(rawMessage: string) {
     const message = rawMessage.trim();
@@ -66,126 +90,66 @@ export function AdminAiAssistant() {
   }
 
   function stopMicrophone() {
-    if (monitorFrameRef.current) cancelAnimationFrame(monitorFrameRef.current);
-    monitorFrameRef.current = null;
-    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    recognitionRef.current?.stop();
   }
 
   function closeAssistant() {
-    discardRecordingRef.current = true;
-    stopMicrophone();
+    discardRecognitionRef.current = true;
+    recognitionRef.current?.abort();
     setOpen(false);
   }
 
-  function blobToBase64(blob: Blob) {
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
-      reader.onerror = () => reject(new Error("ไม่สามารถอ่านไฟล์เสียงได้"));
-      reader.readAsDataURL(blob);
-    });
-  }
-
-  function audioBufferToWav(audioBuffer: AudioBuffer) {
-    const channels = audioBuffer.numberOfChannels;
-    const frameCount = audioBuffer.length;
-    const dataLength = frameCount * 2;
-    const buffer = new ArrayBuffer(44 + dataLength);
-    const view = new DataView(buffer);
-    const writeText = (offset: number, text: string) => { for (let index = 0; index < text.length; index += 1) view.setUint8(offset + index, text.charCodeAt(index)); };
-    writeText(0, "RIFF");
-    view.setUint32(4, 36 + dataLength, true);
-    writeText(8, "WAVE");
-    writeText(12, "fmt ");
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, audioBuffer.sampleRate, true);
-    view.setUint32(28, audioBuffer.sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeText(36, "data");
-    view.setUint32(40, dataLength, true);
-    const channelData = Array.from({ length: channels }, (_, index) => audioBuffer.getChannelData(index));
-    for (let frame = 0; frame < frameCount; frame += 1) {
-      let sample = 0;
-      for (const channel of channelData) sample += channel[frame] || 0;
-      sample = Math.max(-1, Math.min(1, sample / channels));
-      view.setInt16(44 + frame * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-    }
-    return new Blob([buffer], { type: "audio/wav" });
-  }
-
-  async function toggleMicrophone() {
+  function toggleMicrophone() {
     if (listening) { stopMicrophone(); return; }
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setMessages((current) => [...current, { role: "assistant", text: "เบราว์เซอร์นี้ไม่รองรับการอัดเสียง กรุณาใช้ Chrome, Edge หรือ Safari รุ่นล่าสุด" }]);
+    const speechWindow = window as typeof window & {
+      SpeechRecognition?: SpeechRecognitionConstructor;
+      webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    };
+    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      setMessages((current) => [...current, { role: "assistant", text: "เบราว์เซอร์นี้ไม่รองรับการพิมพ์ด้วยเสียง กรุณาใช้ Chrome หรือ Edge รุ่นล่าสุด" }]);
       return;
     }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48_000 } });
-      const preferredTypes = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
-      const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type)) || "";
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType, audioBitsPerSecond: 128_000 } : undefined);
-      const chunks: BlobPart[] = [];
-      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-      recorder.onstop = async () => {
+      const recognition = new Recognition();
+      let finalTranscript = "";
+      let recognitionError = "";
+      recognition.lang = "th-TH";
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 3;
+      recognition.onresult = (event) => {
+        let interimTranscript = "";
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const result = event.results[index];
+          if (result.isFinal) finalTranscript += result[0].transcript;
+          else interimTranscript += result[0].transcript;
+        }
+        setInput((finalTranscript || interimTranscript).trim());
+      };
+      recognition.onerror = (event) => {
+        recognitionError = event.error;
+      };
+      recognition.onend = () => {
         setListening(false);
-        stream.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
-        const decodingContext = audioContextRef.current;
-        if (discardRecordingRef.current) { discardRecordingRef.current = false; if (decodingContext) await decodingContext.close().catch(() => undefined); audioContextRef.current = null; return; }
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        if (blob.size < 1_000 || !decodingContext) { if (decodingContext) await decodingContext.close().catch(() => undefined); audioContextRef.current = null; return; }
-        setLoading(true);
-        try {
-          const decodedAudio = await decodingContext.decodeAudioData(await blob.arrayBuffer());
-          const wavBlob = audioBufferToWav(decodedAudio);
-          const audio = await blobToBase64(wavBlob);
-          const response = await fetch("/api/admin/assistant/transcribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audio, mimeType: "audio/wav" }) });
-          const result = await response.json() as { transcript?: string; error?: string };
-          if (!response.ok || !result.transcript) throw new Error(result.error || "ถอดเสียงไม่สำเร็จ");
-          setInput(result.transcript);
-          setLoading(false);
-          await sendMessage(result.transcript);
-        } catch (error) {
-          setMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "ถอดเสียงไม่สำเร็จ" }]);
-        } finally { await decodingContext.close().catch(() => undefined); audioContextRef.current = null; setLoading(false); }
+        recognitionRef.current = null;
+        if (discardRecognitionRef.current) { discardRecognitionRef.current = false; return; }
+        const transcript = finalTranscript.trim();
+        if (transcript) { setInput(transcript); void sendMessage(transcript); return; }
+        if (recognitionError && recognitionError !== "aborted") {
+          const message = recognitionError === "not-allowed" ? "กรุณาอนุญาตการใช้ไมโครโฟนก่อน" : "ไม่ได้ยินเสียงพูดชัดเจน กรุณาลองใหม่";
+          setMessages((current) => [...current, { role: "assistant", text: message }]);
+        }
       };
-      recorderRef.current = recorder;
-      discardRecordingRef.current = false;
-      mediaStreamRef.current = stream;
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 1024;
-      audioContext.createMediaStreamSource(stream).connect(analyser);
-      const samples = new Uint8Array(analyser.fftSize);
-      const startedAt = performance.now();
-      let noiseFloor = 0.008;
-      let heardSpeech = false;
-      let loudFrames = 0;
-      let lastSpeechAt = startedAt;
-      const monitor = () => {
-        analyser.getByteTimeDomainData(samples);
-        let energy = 0;
-        for (const sample of samples) { const normalized = (sample - 128) / 128; energy += normalized * normalized; }
-        const rms = Math.sqrt(energy / samples.length);
-        const now = performance.now();
-        if (now - startedAt < 500) noiseFloor = Math.max(noiseFloor, rms);
-        const speechThreshold = Math.min(0.08, Math.max(0.018, noiseFloor * 2.4));
-        if (rms > speechThreshold) { loudFrames += 1; if (loudFrames >= 3) { heardSpeech = true; lastSpeechAt = now; } }
-        else loudFrames = 0;
-        if ((heardSpeech && now - lastSpeechAt > 1_600) || now - startedAt > 20_000) { stopMicrophone(); return; }
-        monitorFrameRef.current = requestAnimationFrame(monitor);
-      };
+      recognitionRef.current = recognition;
+      discardRecognitionRef.current = false;
       setInput("");
       setListening(true);
-      recorder.start(250);
-      monitorFrameRef.current = requestAnimationFrame(monitor);
+      recognition.start();
     } catch (error) {
       setListening(false);
-      setMessages((current) => [...current, { role: "assistant", text: error instanceof Error && error.name === "NotAllowedError" ? "กรุณาอนุญาตการใช้ไมโครโฟนก่อน" : "ไม่สามารถเปิดไมโครโฟนได้" }]);
+      setMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "ไม่สามารถเปิดไมโครโฟนได้" }]);
     }
   }
 
