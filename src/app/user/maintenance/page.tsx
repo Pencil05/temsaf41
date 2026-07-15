@@ -27,7 +27,7 @@ export default async function UserMaintenancePage({ searchParams }: { searchPara
 
         <DashboardActions data={actions} showReturn={false} />
 
-        <div className="mt-6"><div><p className="text-sm font-semibold text-orange-600">ประวัติทั้งหมด</p><h2 className="text-xl font-bold text-slate-900">รายการแจ้งเสียและผลการซ่อม</h2></div><HistoryClient items={history} initialTx={tx} /></div>
+        <div className="mt-6"><div><p className="text-sm font-semibold text-orange-600">ประวัติทั้งหมด</p><h2 className="text-xl font-bold text-slate-900">รายการแจ้งเสียและผลการซ่อม</h2></div><HistoryClient items={history} initialTx={tx} statusColumnLabel="สถานะ" /></div>
       </div>
     </main>
   );

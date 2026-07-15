@@ -35,6 +35,7 @@ export type BorrowCompany = {
 };
 
 export type BorrowPageData = {
+  ownerCompanyId: string;
   ownerCompanyName: string;
   borrowerName: string;
   contactPhone: string;
@@ -50,6 +51,7 @@ export type CategoryInventoryItem = BorrowInventoryItem & {
 
 export type CategoryInventoryData = {
   category: string;
+  ownerCompanyId: string;
   companyName: string;
   borrowerName: string;
   contactPhone: string;
@@ -253,11 +255,12 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
     .sort((first, second) => first.name.localeCompare(second.name, "th"));
 
   return {
+    ownerCompanyId: user.companyId,
     ownerCompanyName: companies.find((company) => company.id === user.companyId)?.name || "หน่วยงานของคุณ",
     borrowerName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
     contactPhone: account?.phone || "",
     contactEmail: account?.gmail || account?.email || user.email,
-    companies: companies.filter((company) => company.id !== user.companyId),
+    companies,
     inventory,
   };
 }
@@ -311,11 +314,12 @@ export async function getCategoryInventoryData(
 
   return {
     category: categoryName,
+    ownerCompanyId: user.companyId,
     companyName: companies.find((company) => company.id === user.companyId)?.name || "หน่วยงานของคุณ",
     borrowerName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
     contactPhone: account?.phone || "",
     contactEmail: account?.gmail || account?.email || user.email,
-    companies: companies.filter((company) => company.id !== user.companyId),
+    companies,
     inventory,
   };
 }
@@ -325,6 +329,8 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
     if (!input.borrowerCompanyId || !input.items.length) {
       throw new BorrowValidationError("กรุณากรอกข้อมูลการยืมให้ครบถ้วน");
     }
+    const uniqueSelections = new Set(input.items.map((item) => `${item.inventoryId}::${item.plateNumber || ""}`));
+    if (uniqueSelections.size !== input.items.length) throw new BorrowValidationError("พบรายการยุทโธปกรณ์ซ้ำ กรุณาเลือกแต่ละรายการเพียงครั้งเดียว");
 
     const dueDate = input.dueDate
       ? new Date(input.dueDate)
@@ -354,9 +360,8 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
     if (!borrowerCompany) {
       throw new BorrowValidationError("ไม่พบหน่วยงานผู้ยืมที่เลือก");
     }
-    if (input.borrowerCompanyId === user.companyId) {
-      throw new BorrowValidationError("หน่วยต้นทางและหน่วยปลายทางต้องไม่ใช่หน่วยเดียวกัน");
-    }
+    const selfUse = input.borrowerCompanyId === user.companyId;
+    if (selfUse && !input.note?.trim()) throw new BorrowValidationError("การเบิกใช้งานภายในหน่วยต้องระบุสถานที่และวัตถุประสงค์ในหมายเหตุ");
 
     const companyNameById = new Map(
       companiesTable.rows.map(({ record }) => [
@@ -391,7 +396,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       if (requirePlate && (!requestItem.plateNumber || requestItem.plateNumber !== plateNumber)) {
         throw new BorrowValidationError("กรุณาเลือกยานพาหนะตามหมายเลขทะเบียนที่แสดง");
       }
-      const destinationInventory = inventoriesTable.rows.find(({ record }) =>
+      const destinationInventory = selfUse ? inventoryRow : inventoriesTable.rows.find(({ record }) =>
         getField(record, "Company_ID", "CompanyId") === input.borrowerCompanyId &&
         getField(record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId") === equipmentId &&
         (!plateNumber || getField(record, "Plate_Number", "PlateNumber") === plateNumber),
@@ -413,7 +418,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
         total,
         quantity,
         destinationInventory,
-        destinationInventoryId: destinationInventory
+        destinationInventoryId: selfUse ? getInventoryKey(inventoryRow) : destinationInventory
           ? getInventoryKey(destinationInventory)
           : `INV-${crypto.randomUUID()}`,
         destinationAvailable: destinationInventory
@@ -484,10 +489,6 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
     const updates: Array<{ range: string; values: Array<Array<string | number>> }> = requestedRows.flatMap((item) => {
       const itemUpdates: Array<{ range: string; values: Array<Array<string | number>> }> = [
         {
-          range: `'Inventories'!${columnLetter(totalColumn)}${item.inventoryRow.rowNumber}`,
-          values: [[Math.max(0, item.total - item.quantity)]],
-        },
-        {
           range: `'Inventories'!${columnLetter(availableColumn)}${item.inventoryRow.rowNumber}`,
           values: [[item.available - item.quantity]],
         },
@@ -497,7 +498,12 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
         },
       ];
 
-      if (item.destinationInventory) {
+      if (!selfUse) itemUpdates.unshift({
+        range: `'Inventories'!${columnLetter(totalColumn)}${item.inventoryRow.rowNumber}`,
+        values: [[Math.max(0, item.total - item.quantity)]],
+      });
+
+      if (!selfUse && item.destinationInventory) {
         itemUpdates.push(
           {
             range: `'Inventories'!${columnLetter(totalColumn)}${item.destinationInventory.rowNumber}`,
@@ -508,7 +514,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
             values: [[item.destinationAvailable + item.quantity]],
           },
         );
-      } else {
+      } else if (!selfUse) {
         const rowNumber = nextInventoryRow++;
         itemUpdates.push({
           range: `'Inventories'!A${rowNumber}:${columnLetter(inventoriesTable.headers.length - 1)}${rowNumber}`,

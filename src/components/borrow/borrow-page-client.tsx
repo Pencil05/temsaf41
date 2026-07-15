@@ -50,6 +50,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const [toast, setToast] = useState<Toast>(null);
   const [receipt, setReceipt] = useState<BorrowReceipt | null>(null);
   const [reviewReceipt, setReviewReceipt] = useState<BorrowReceipt | null>(null);
+  const selfUse = borrowerCompanyId === data.ownerCompanyId;
   usePopupDismiss(Boolean(reviewReceipt), () => setReviewReceipt(null));
   usePopupDismiss(Boolean(receipt) && !downloadMenuOpen, () => setReceipt(null));
   usePopupDismiss(downloadMenuOpen, () => setDownloadMenuOpen(false));
@@ -147,6 +148,10 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     }
     if (!dueDate || new Date(dueDate).getTime() <= Date.now()) {
       showToast("error", "กรุณาระบุวันและเวลาส่งคืนที่อยู่ในอนาคต");
+      return;
+    }
+    if (selfUse && !note.trim()) {
+      showToast("error", "กรุณาระบุสถานที่และวัตถุประสงค์ของการเบิกใช้งานภายในหน่วย");
       return;
     }
 
@@ -392,10 +397,12 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                 >
                   <option value="">เลือกหน่วยงานปลายทาง</option>
                   {data.companies.map((company) => (
-                    <option key={company.id} value={company.id}>{company.name}</option>
+                    <option key={company.id} value={company.id}>{company.name}{company.id === data.ownerCompanyId ? " (เบิกใช้งานภายในหน่วย)" : ""}</option>
                   ))}
                 </select>
               </label>
+
+              {selfUse && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-800"><p className="font-bold">เบิกใช้งานภายในหน่วย</p><p>ระบบจะกันจำนวนออกจากยอดพร้อมใช้ชั่วคราว โดยไม่ย้ายไปสร้างคลังใหม่ และต้องแจ้งคืนเข้าคลังเดิมเมื่อใช้งานเสร็จ</p></div>}
 
               <label className="block">
                 <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
@@ -417,7 +424,8 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                   onChange={(event) => setNote(event.target.value)}
                   rows={4}
                   maxLength={500}
-                  placeholder="ระบุวัตถุประสงค์หรือข้อมูลเพิ่มเติม (ถ้ามี)"
+                  placeholder={selfUse ? "ระบุสถานที่ใช้งานและวัตถุประสงค์ เช่น สนามฝึกด้านทิศเหนือ ใช้ฝึกประจำวัน" : "ระบุวัตถุประสงค์หรือข้อมูลเพิ่มเติม (ถ้ามี)"}
+                  required={selfUse}
                   className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 />
               </label>

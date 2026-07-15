@@ -556,8 +556,8 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
         contactPhone: transactionUser?.phone || "",
         contactEmail: transactionUser?.email || "",
         quantity,
-        ownerCompanyName: companyNames.get(ownerCompanyId) || ownerCompanyId,
-        borrowerCompanyName: companyNames.get(borrowerCompanyId) || borrowerCompanyId,
+        ownerCompanyName: movementType === "return" ? companyNames.get(borrowerCompanyId) || borrowerCompanyId : companyNames.get(ownerCompanyId) || ownerCompanyId,
+        borrowerCompanyName: movementType === "return" ? companyNames.get(ownerCompanyId) || ownerCompanyId : companyNames.get(borrowerCompanyId) || borrowerCompanyId,
         date: movementType === "return"
           ? getField(transaction, "Return_Date", "Returned_At") || getField(transaction, "Borrow_Date", "Transaction_Date", "Date")
           : getField(transaction, "Borrow_Date", "Transaction_Date", "Date"),

@@ -300,7 +300,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
                 <option value="">เลือกรายการ</option>
                 {data.returns.map((item) => (
                   <option key={item.transactionId} value={item.transactionId}>
-                    {item.name} จำนวน {item.quantity}
+                    {item.name} จำนวน {item.quantity}{item.selfUse ? " · ใช้งานภายในหน่วย" : ""}
                   </option>
                 ))}
               </select>
@@ -328,12 +328,12 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
             </label>
 
             <div>
-              <span className="mb-2 block text-sm font-semibold">คืนไปยังหน่วยเจ้าของเดิม</span>
+              <span className="mb-2 block text-sm font-semibold">{selectedReturn?.selfUse ? "คืนเข้าคลังเดิม" : "คืนไปยังหน่วยเจ้าของเดิม"}</span>
               <div className="flex min-h-12 items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 font-semibold text-emerald-800">
                 {selectedReturn?.ownerCompanyName || "เลือกรายการที่ต้องการคืนก่อน"}
               </div>
               <span className="mt-2 block text-xs text-slate-500">
-                ระบบกำหนดปลายทางจากรายการยืมโดยอัตโนมัติ ไม่สามารถเปลี่ยนหน่วยรับคืนได้
+                {selectedReturn?.selfUse ? "รายการนี้เป็นการเบิกใช้งานภายในหน่วย ระบบจะคืนยอดกลับเข้าคลังเดิม" : "ระบบกำหนดปลายทางจากรายการยืมโดยอัตโนมัติ ไม่สามารถเปลี่ยนหน่วยรับคืนได้"}
               </span>
             </div>
 
@@ -432,7 +432,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
               contactEmail={data.contactEmail}
               ownerCompanyName={data.companyName}
               borrowerCompanyName={selectedReturn.ownerCompanyName}
-              note="คืนไปยังหน่วยเจ้าของเดิม"
+              note={selectedReturn.selfUse ? "คืนยุทโธปกรณ์จากการใช้งานภายในหน่วยเข้าคลังเดิม" : "คืนไปยังหน่วยเจ้าของเดิม"}
               evidenceImage={returnEvidenceImage}
               items={[{ name: selectedReturn.name, quantity: Number(returnQuantity) }]}
             />

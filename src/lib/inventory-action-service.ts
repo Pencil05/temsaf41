@@ -21,7 +21,7 @@ export type DashboardActionData = {
   contactPhone: string;
   contactEmail: string;
   companies: Array<{ id: string; name: string }>;
-  returns: Array<{ transactionId: string; name: string; quantity: number; ownerCompanyId: string; ownerCompanyName: string }>;
+  returns: Array<{ transactionId: string; name: string; quantity: number; ownerCompanyId: string; ownerCompanyName: string; selfUse: boolean }>;
   defects: Array<{ sourceType: "inventory" | "borrowed"; sourceId: string; name: string; maximum: number; label: string }>;
 };
 
@@ -188,7 +188,7 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
   ]));
   const returns = transactions.rows.filter(({ record }) =>
     value(record, "Borrower_Company_ID", "BorrowerCompanyId") === user.companyId &&
-    value(record, "Status").toLowerCase() === "borrowed",
+    ["borrowed", "overdue"].includes(value(record, "Status").toLowerCase()),
   ).map((transaction) => {
     const { record } = transaction;
     const inferredInventory = inferLegacySourceInventory(transaction, inventories.rows);
@@ -204,6 +204,7 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
       quantity: numberValue(record, "Qty", "Quantity"),
       ownerCompanyId,
       ownerCompanyName: companyNames.get(ownerCompanyId) || ownerCompanyId,
+      selfUse: ownerCompanyId === value(record, "Borrower_Company_ID", "BorrowerCompanyId"),
     };
   });
   const defects: DashboardActionData["defects"] = inventories.rows.filter(({ record }) =>
@@ -244,7 +245,7 @@ export async function returnEquipment(
       value(record, "Tx_ID", "Transaction_ID", "TransactionId", "ID") === input.transactionId,
     );
     if (!transaction) throw new InventoryActionError("ไม่พบรายการที่กำลังยืม");
-    if (value(transaction.record, "Status").toLowerCase() !== "borrowed") throw new InventoryActionError("รายการนี้ถูกดำเนินการแล้ว");
+    if (!["borrowed", "overdue"].includes(value(transaction.record, "Status").toLowerCase())) throw new InventoryActionError("รายการนี้ถูกดำเนินการแล้ว");
     const ownerCompanyId = value(transaction.record, "Owner_Company_ID", "OwnerCompanyId");
     const sourceInventoryId = value(transaction.record, "Inv_ID", "Inventory_ID", "InventoryId");
     const destinationInventoryId = value(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
@@ -268,6 +269,7 @@ export async function returnEquipment(
       (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
     );
     if (!sourceInventory || !destinationInventory) throw new InventoryActionError("ไม่พบคลังต้นทางหรือปลายทาง");
+    const selfUse = ownerCompanyId === borrowerCompanyId && sourceInventory.rowNumber === destinationInventory.rowNumber;
     const borrowedQuantity = numberValue(transaction.record, "Qty", "Quantity");
     const quantity = Math.floor(Number(input.quantity));
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > borrowedQuantity) {
@@ -279,16 +281,25 @@ export async function returnEquipment(
     const sourceBorrowed = numberValue(sourceInventory.record, "Qty_Borrowed", "Borrowed_Quantity");
     const destinationTotal = numberValue(destinationInventory.record, "Qty_Total", "Total_Quantity");
     const destinationAvailable = numberValue(destinationInventory.record, "Qty_Available", "Available_Quantity");
-    if (destinationAvailable < quantity || destinationTotal < quantity) {
+    if (!selfUse && (destinationAvailable < quantity || destinationTotal < quantity)) {
       throw new InventoryActionError("จำนวนในคลังปลายทางไม่เพียงพอสำหรับการคืน");
     }
     const now = new Date().toISOString();
+    if (selfUse) {
+      updates.push(
+        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), sourceAvailable + quantity),
+        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Borrowed", "Borrowed_Quantity"), Math.max(0, sourceBorrowed - quantity)),
+      );
+    } else {
+      updates.push(
+        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), sourceTotal + quantity),
+        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), sourceAvailable + quantity),
+        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Borrowed", "Borrowed_Quantity"), Math.max(0, sourceBorrowed - quantity)),
+        cell(inventories, destinationInventory.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), destinationTotal - quantity),
+        cell(inventories, destinationInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), destinationAvailable - quantity),
+      );
+    }
     updates.push(
-      cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), sourceTotal + quantity),
-      cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), sourceAvailable + quantity),
-      cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Borrowed", "Borrowed_Quantity"), Math.max(0, sourceBorrowed - quantity)),
-      cell(inventories, destinationInventory.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), destinationTotal - quantity),
-      cell(inventories, destinationInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), destinationAvailable - quantity),
       cell(transactions, transaction.rowNumber, column(transactions.headers, "Qty", "Quantity"), remainingQuantity || quantity),
       cell(transactions, transaction.rowNumber, column(transactions.headers, "Status"), remainingQuantity === 0 ? "Returned" : "Borrowed"),
     );
