@@ -39,6 +39,8 @@ export type AdminMaintenance = {
   inventoryId: string;
   companyId: string;
   equipmentName: string;
+  plateNumber: string;
+  picture: string;
   companyName: string;
   operator: string;
   operatorPhone: string;
@@ -83,7 +85,7 @@ function resolvedAuditDetails(raw: string, companyNames: Map<string, string>, in
   if (!raw) return "ไม่มีรายละเอียดเพิ่มเติม";
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "add-inventory": "เพิ่มรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
+    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "add-inventory": "เพิ่มรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
     return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage"].includes(key) && !key.toLowerCase().includes("password")).map(([key, rawValue]) => {
       const value = String(rawValue || "-");
       if (key === "action") return `คำสั่ง: ${actionNames[value] || value}`;
@@ -196,7 +198,8 @@ export async function getAdminData(): Promise<AdminData> {
     const inventoryId = field(record, "Inv_ID");
     const inventory = inventoryById.get(inventoryId) || {};
     const operator = userDetails.get(field(record, "User_ID"));
-    return { id: field(record, "Maint_ID"), inventoryId, companyId: field(inventory, "Company_ID"), equipmentName: equipmentNames.get(field(inventory, "Equip_ID")) || "ไม่ระบุชื่อยุทโธปกรณ์", companyName: companyNames.get(field(inventory, "Company_ID")) || "-", operator: operator?.name || "-", operatorPhone: operator?.phone || "", operatorEmail: operator?.email || "", quantity: number(record, "Qty"), status: field(record, "Status"), note: field(record, "Note"), date: field(record, "Reported_At"), completedAt: field(record, "Completed_At"), completedBy: userDetails.get(field(record, "Completed_By_User_ID"))?.name || "", evidenceImage: field(record, "Evidence_Image", "Evidence", "Evidence_File") };
+    const equipmentId = field(inventory, "Equip_ID");
+    return { id: field(record, "Maint_ID"), inventoryId, companyId: field(inventory, "Company_ID"), equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์", plateNumber: field(inventory, "Plate_Number"), picture: equipments.find((item) => item.id === equipmentId)?.picture || getEquipmentImage(equipmentNames.get(equipmentId) || ""), companyName: companyNames.get(field(inventory, "Company_ID")) || "-", operator: operator?.name || "-", operatorPhone: operator?.phone || "", operatorEmail: operator?.email || "", quantity: number(record, "Qty"), status: field(record, "Status"), note: field(record, "Note"), date: field(record, "Reported_At"), completedAt: field(record, "Completed_At"), completedBy: userDetails.get(field(record, "Completed_By_User_ID"))?.name || "", evidenceImage: field(record, "Evidence_Image", "Evidence", "Evidence_File") };
   }).sort((a, b) => Date.parse(b.completedAt || b.date) - Date.parse(a.completedAt || a.date));
   const logs = logsTable.rows.map(({ record }) => {
     const target = field(record, "Target_ID");
@@ -385,6 +388,23 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
         append(transactions, valuesFor(transactions, { Tx_ID: `${returnGroupId}-1`, Group_Tx_ID: returnGroupId, Return_Group_ID: returnGroupId, Transaction_Type: "RETURN", Parent_Tx_ID: target, Owner_Company_ID: ownerCompanyId, Borrower_Company_ID: borrowerCompanyId, User_ID: admin.userId, Inv_ID: sourceInventoryId, Destination_Inventory_ID: destinationInventoryId, Equip_ID: resolvedEquipmentId, Plate_Number: plateNumber, Qty: quantity, Original_Qty: quantity, Outstanding_Qty: 0, Borrow_Date: now, Return_Date: now, Return_User_ID: admin.userId, Status: "Returned", Note: `ผู้ดูแลระบบคืนยุทโธปกรณ์จากรายการ ${target}` })),
       );
       auditContext = { equipmentName: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === resolvedEquipmentId)?.record || {}, "Equip_Name"), companyName: `${field(companies.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId)?.record || {}, "Company_Name")} → ${field(companies.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId)?.record || {}, "Company_Name")}`, quantity: String(quantity) };
+    } else if (action === "report-defect") {
+      const inventory = inventories.rows.find(({ record }) => field(record, "Inv_ID") === String(input.inventoryId || input.id || ""));
+      if (!inventory) throw new Error("ไม่พบยุทโธปกรณ์ในคลังที่ต้องการแจ้งเสีย");
+      const quantity = Math.floor(Number(input.quantity));
+      const available = number(inventory.record, "Qty_Available");
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > available) throw new Error(`แจ้งเสียได้สูงสุด ${available} รายการ`);
+      const evidenceImage = String(input.evidenceImage || "");
+      if (!evidenceImage.startsWith("data:image/") || evidenceImage.length > 45_000) throw new Error("กรุณาแนบรูปหลักฐานการแจ้งเสีย");
+      maintenance = withColumns(maintenance, ["Evidence_Image"], updates);
+      target = `MNT-${randomUUID()}`;
+      updates.push(
+        cell(inventories, inventory.rowNumber, requireColumn(inventories, "Qty_Available"), available - quantity),
+        cell(inventories, inventory.rowNumber, requireColumn(inventories, "Qty_Broken"), number(inventory.record, "Qty_Broken") + quantity),
+        append(maintenance, valuesFor(maintenance, { Maint_ID: target, Inv_ID: field(inventory.record, "Inv_ID"), User_ID: admin.userId, Qty: quantity, Status: "Reported", Note: String(input.note || "แจ้งผ่าน AI ผู้ช่วยผู้ดูแลระบบ"), Reported_At: new Date().toISOString(), Evidence_Image: evidenceImage })),
+      );
+      const equipmentId = field(inventory.record, "Equip_ID");
+      auditContext = { equipmentName: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === equipmentId)?.record || {}, "Equip_Name"), companyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === field(inventory.record, "Company_ID"))?.record || {}, "Company_Name"), plateNumber: field(inventory.record, "Plate_Number") };
     } else if (action === "maintenance-status") {
       const row = maintenance.rows.find(({ record }) => field(record, "Maint_ID") === target);
       if (!row) throw new Error("ไม่พบรายการซ่อม");

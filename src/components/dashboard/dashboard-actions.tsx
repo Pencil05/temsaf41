@@ -1,12 +1,14 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, Download, FileImage, FileText, RotateCcw, UploadCloud, Wrench, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileImage, FileText, PackagePlus, RotateCcw, UploadCloud, Wrench, X } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { EquipmentImage } from "@/components/equipment/equipment-image";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
+import { CompactSelect } from "@/components/ui/compact-select";
 import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
 import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
 import type { DashboardActionData } from "@/lib/inventory-action-service";
@@ -24,7 +26,6 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   const [returnEvidenceImage, setReturnEvidenceImage] = useState("");
   const [isPreparingReturnEvidence, setIsPreparingReturnEvidence] = useState(false);
   const [defectKey, setDefectKey] = useState("");
-  const [defectSearch, setDefectSearch] = useState("");
   const [quantity, setQuantity] = useState<number | "">(1);
   const [note, setNote] = useState("");
   const [defectEvidenceName, setDefectEvidenceName] = useState("");
@@ -45,14 +46,6 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   const selectedOwnerName = selectedReturns[0]?.ownerCompanyName || "";
   const selectedSelfUse = selectedReturns.length > 0 && selectedReturns.every((item) => item.selfUse);
   const returnGroups = [...data.returns.reduce((groups, item) => { const records = groups.get(item.ownerCompanyId) || []; records.push(item); groups.set(item.ownerCompanyId, records); return groups; }, new Map<string, DashboardActionData["returns"]>())];
-
-  usePopupDismiss(mode !== null && !returnReview, closeMode);
-  usePopupDismiss(returnReview && !returnDownloadOpen, () => {
-    if (returnCompleted) closeCompletedReturn();
-    else setReturnReview(false);
-  });
-  usePopupDismiss(returnDownloadOpen, () => setReturnDownloadOpen(false));
-  useEffect(() => { if (!message) return; const timeout = window.setTimeout(() => setMessage(null), 3000); return () => window.clearTimeout(timeout); }, [message]);
 
   function closeMode() {
     setMode(null);
@@ -117,7 +110,6 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   function openDefect() {
     setDefectEvidenceName("");
     setDefectEvidenceImage("");
-    setDefectSearch("");
     setDefectKey("");
     setMode("defect");
   }
@@ -211,6 +203,14 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
     router.refresh();
   }
 
+  usePopupDismiss(mode !== null && !returnReview, closeMode);
+  usePopupDismiss(returnReview && !returnDownloadOpen, () => {
+    if (returnCompleted) closeCompletedReturn();
+    else setReturnReview(false);
+  });
+  usePopupDismiss(returnDownloadOpen, () => setReturnDownloadOpen(false));
+  useEffect(() => { if (!message) return; const timeout = window.setTimeout(() => setMessage(null), 3000); return () => window.clearTimeout(timeout); }, [message]);
+
   async function submitDefect(event: FormEvent) {
     event.preventDefault();
     const requestedQuantity = Number(quantity);
@@ -272,7 +272,12 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
         </div>
       )}
 
-      <section className={`mt-6 grid gap-3 ${showReturn ? "grid-cols-2" : "grid-cols-1"}`}>
+      <section className={`mt-6 grid gap-3 ${showReturn ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"}`}>
+        <Link href="/user/borrow" className="group rounded-[22px] border border-blue-100 bg-white p-4 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:border-blue-300">
+          <span className="grid size-11 place-items-center rounded-2xl bg-blue-100 text-blue-600 transition group-hover:bg-blue-600 group-hover:text-white group-active:bg-blue-600 group-active:text-white"><PackagePlus className="size-5" /></span>
+          <span className="mt-3 block font-bold text-slate-800">เบิกยุทโธปกรณ์</span>
+          <span className="mt-1 block text-xs text-slate-500">เลือกเบิกได้หลายรายการ</span>
+        </Link>
         <button
           onClick={openDefect}
           className="group rounded-[22px] border border-orange-100 bg-white p-4 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:border-orange-200"
@@ -331,9 +336,10 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
           <form onSubmit={submitDefect} className="space-y-4">
             <label className="block">
               <span className="mb-2 block text-sm font-semibold">รายการยุทโธปกรณ์</span>
-              <input value={defectSearch} list="defect-equipment-options" onChange={(event) => { const next = event.target.value; setDefectSearch(next); const matched = data.defects.find((item) => `${item.name} · ${item.label} · สูงสุด ${item.maximum}` === next); if (matched) chooseDefect(`${matched.sourceType}:${matched.sourceId}`); else setDefectKey(""); }} placeholder="พิมพ์ค้นหาแล้วเลือกรายการ" autoComplete="off" className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3" required />
-              <datalist id="defect-equipment-options">{data.defects.map((item) => <option key={`${item.sourceType}:${item.sourceId}`} value={`${item.name} · ${item.label} · สูงสุด ${item.maximum}`} />)}</datalist>
+              <CompactSelect value={defectKey} onChange={chooseDefect} searchable required placeholder="พิมพ์ค้นหาแล้วเลือกรายการ" options={data.defects.map((item) => ({ value: `${item.sourceType}:${item.sourceId}`, label: item.name, description: `${item.label} · พร้อมใช้ ${item.maximum.toLocaleString("th-TH")}`, image: item.picture || undefined }))} />
             </label>
+
+            {defect && <div className="flex items-center gap-3 rounded-2xl border border-orange-200 bg-orange-50 p-3"><span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-white p-1"><EquipmentImage name={defect.name} src={defect.picture || undefined} className="size-full" /></span><span className="min-w-0"><span className="block truncate font-bold">{defect.name}</span><span className="mt-1 block text-xs font-semibold text-orange-700">{defect.plateNumber ? `ทะเบียน/หมายเลข ${defect.plateNumber}` : `พร้อมแจ้งเสียสูงสุด ${defect.maximum.toLocaleString("th-TH")}`}</span></span></div>}
 
             <label className="block">
               <span className="mb-2 block text-sm font-semibold">จำนวนที่ชำรุด</span>

@@ -22,7 +22,7 @@ export type DashboardActionData = {
   contactEmail: string;
   companies: Array<{ id: string; name: string }>;
   returns: Array<{ transactionId: string; name: string; quantity: number; ownerCompanyId: string; ownerCompanyName: string; selfUse: boolean }>;
-  defects: Array<{ sourceType: "inventory" | "borrowed"; sourceId: string; name: string; maximum: number; label: string }>;
+  defects: Array<{ sourceType: "inventory" | "borrowed"; sourceId: string; name: string; maximum: number; label: string; plateNumber: string; picture: string }>;
 };
 
 export class InventoryActionError extends Error {}
@@ -182,6 +182,10 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
     value(record, "Equip_ID", "Equipment_ID", "EquipId", "ID"),
     value(record, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
   ]));
+  const equipmentPictures = new Map(equipmentTable.rows.map(({ record }) => [
+    value(record, "Equip_ID", "Equipment_ID", "EquipId", "ID"),
+    value(record, "Picture", "Image", "Image_URL"),
+  ]));
   const equipmentIdByInventoryId = new Map(inventories.rows.map((row) => [
     inventoryKey(row),
     value(row.record, "Equip_ID", "Equipment_ID", "EquipId"),
@@ -210,13 +214,18 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
   });
   const defects: DashboardActionData["defects"] = inventories.rows.filter(({ record }) =>
     value(record, "Company_ID", "CompanyId") === user.companyId,
-  ).map((row) => ({
+  ).map((row) => {
+    const equipmentId = value(row.record, "Equip_ID", "Equipment_ID", "EquipId");
+    const plateNumber = value(row.record, "Plate_Number", "PlateNumber");
+    return {
     sourceType: "inventory" as const,
     sourceId: inventoryKey(row),
-    name: equipmentNames.get(value(row.record, "Equip_ID", "Equipment_ID", "EquipId")) || "ไม่ระบุชื่อ",
+    name: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อ",
     maximum: numberValue(row.record, "Qty_Available", "Available_Quantity"),
-    label: "ในคลัง",
-  })).filter((item) => item.maximum > 0);
+    label: plateNumber ? `ทะเบียน/หมายเลข ${plateNumber}` : "ในคลัง",
+    plateNumber,
+    picture: equipmentPictures.get(equipmentId) || "",
+  }; }).filter((item) => item.maximum > 0);
   return {
     userName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
     companyName: companyNames.get(user.companyId) || user.companyId,

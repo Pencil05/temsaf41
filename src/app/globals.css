@@ -266,6 +266,18 @@ html[data-theme="dark"] option {
   color: #f7f8f8;
 }
 
+html[data-theme="dark"] [class*="hover:bg-white"]:hover,
+html[data-theme="dark"] [class*="hover:bg-slate-50"]:hover,
+html[data-theme="dark"] [class*="hover:bg-slate-100"]:hover {
+  color: #172033 !important;
+}
+
+html[data-theme="dark"] [class*="hover:bg-white"]:hover *,
+html[data-theme="dark"] [class*="hover:bg-slate-50"]:hover *,
+html[data-theme="dark"] [class*="hover:bg-slate-100"]:hover * {
+  color: #172033 !important;
+}
+
 html[data-theme="dark"] .login-glow {
   opacity: 0.2;
 }
