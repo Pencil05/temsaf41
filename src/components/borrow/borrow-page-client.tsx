@@ -24,6 +24,7 @@ import type {
   BorrowReceipt,
 } from "@/lib/borrow-service";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
+import { CompactSelect } from "@/components/ui/compact-select";
 import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { EquipmentImage } from "@/components/equipment/equipment-image";
@@ -389,17 +390,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
             <div className="mt-5 space-y-4">
               <label className="block">
                 <span className="mb-2 block text-sm font-semibold text-slate-700">หน่วยงานผู้ยืม</span>
-                <select
-                  value={borrowerCompanyId}
-                  onChange={(event) => setBorrowerCompanyId(event.target.value)}
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-                  required
-                >
-                  <option value="">เลือกหน่วยงานปลายทาง</option>
-                  {data.companies.map((company) => (
-                    <option key={company.id} value={company.id}>{company.name}{company.id === data.ownerCompanyId ? " (เบิกใช้งานภายในหน่วย)" : ""}</option>
-                  ))}
-                </select>
+                <CompactSelect value={borrowerCompanyId} onChange={setBorrowerCompanyId} required searchable placeholder="เลือกหน่วยงานปลายทาง" options={data.companies.map((company) => ({ value: company.id, label: company.name, description: company.id === data.ownerCompanyId ? "เบิกใช้งานภายในหน่วย" : undefined }))} />
               </label>
 
               {selfUse && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-800"><p className="font-bold">เบิกใช้งานภายในหน่วย</p><p>ระบบจะกันจำนวนออกจากยอดพร้อมใช้ชั่วคราว โดยไม่ย้ายไปสร้างคลังใหม่ และต้องแจ้งคืนเข้าคลังเดิมเมื่อใช้งานเสร็จ</p></div>}
