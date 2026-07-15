@@ -13,6 +13,7 @@ type Update = { range: string; values: (string | number)[][] };
 
 export type AdminTransaction = {
   id: string;
+  movementType: "borrow" | "return";
   inventoryId: string;
   equipmentName: string;
   plateNumber: string;
@@ -24,6 +25,7 @@ export type AdminTransaction = {
   operatorPhone: string;
   operatorEmail: string;
   quantity: number;
+  outstandingQuantity: number;
   status: string;
   date: string;
   dueDate: string;
@@ -186,8 +188,9 @@ export async function getAdminData(): Promise<AdminData> {
     const inventoryId = field(record, "Inv_ID");
     const inventory = inventoryById.get(inventoryId) || {};
     const operator = userDetails.get(field(record, "User_ID"));
-    const returned = field(record, "Status").toLowerCase() === "returned";
-    return { id: field(record, "Tx_ID"), inventoryId, equipmentName: equipmentNames.get(field(inventory, "Equip_ID")) || "ไม่ระบุชื่อยุทโธปกรณ์", plateNumber: field(inventory, "Plate_Number"), ownerCompanyId: field(record, "Owner_Company_ID"), owner: companyNames.get(field(record, "Owner_Company_ID")) || "-", borrowerCompanyId: field(record, "Borrower_Company_ID"), borrower: companyNames.get(field(record, "Borrower_Company_ID")) || "-", operator: operator?.name || "-", operatorPhone: operator?.phone || "", operatorEmail: operator?.email || "", quantity: number(record, "Qty"), status: field(record, "Status"), date: field(record, "Borrow_Date"), dueDate: field(record, "Due_Date"), returnDate: field(record, "Return_Date"), note: field(record, "Note"), evidenceImage: returned ? field(record, "Return_Evidence_Image", "Return_Evidence", "Returned_Evidence_Image") : field(record, "Evidence_Image") };
+    const transactionType = field(record, "Transaction_Type").toLowerCase();
+    const movementType = transactionType === "return" || (!transactionType && field(record, "Status").toLowerCase() === "returned") ? "return" as const : "borrow" as const;
+    return { id: field(record, "Tx_ID"), movementType, inventoryId, equipmentName: equipmentNames.get(field(inventory, "Equip_ID")) || equipmentNames.get(field(record, "Equip_ID")) || "ไม่ระบุชื่อยุทโธปกรณ์", plateNumber: field(record, "Plate_Number") || field(inventory, "Plate_Number"), ownerCompanyId: field(record, "Owner_Company_ID"), owner: companyNames.get(field(record, "Owner_Company_ID")) || "-", borrowerCompanyId: field(record, "Borrower_Company_ID"), borrower: companyNames.get(field(record, "Borrower_Company_ID")) || "-", operator: operator?.name || "-", operatorPhone: operator?.phone || "", operatorEmail: operator?.email || "", quantity: number(record, "Original_Qty") || number(record, "Qty"), outstandingQuantity: number(record, "Outstanding_Qty") || (field(record, "Status").toLowerCase() === "returned" ? 0 : number(record, "Qty")), status: field(record, "Status"), date: field(record, "Borrow_Date"), dueDate: field(record, "Due_Date"), returnDate: field(record, "Return_Date"), note: field(record, "Note"), evidenceImage: movementType === "return" ? field(record, "Return_Evidence_Image", "Return_Evidence", "Returned_Evidence_Image", "Evidence_Image") : field(record, "Evidence_Image") };
   }).sort((a, b) => Date.parse(b.returnDate || b.date) - Date.parse(a.returnDate || a.date));
   const maintenance = maintenanceTable.rows.map(({ record }) => {
     const inventoryId = field(record, "Inv_ID");
@@ -199,15 +202,14 @@ export async function getAdminData(): Promise<AdminData> {
     const target = field(record, "Target_ID");
     const targetInventory = inventoryById.get(target);
     const targetMaintenance = maintenanceById.get(target);
-    const targetTransaction = transactionById.get(target);
+    const targetTransactions = transactionsTable.rows.map(({ record }) => record).filter((transaction) => field(transaction, "Tx_ID") === target || field(transaction, "Group_Tx_ID", "Borrow_Batch_ID", "Return_Group_ID") === target);
+    const targetTransaction = transactionById.get(target) || targetTransactions[0];
     const maintenanceInventory = targetMaintenance ? inventoryById.get(field(targetMaintenance, "Inv_ID")) : undefined;
     const companyIds = new Set<string>();
     if (targetInventory) companyIds.add(field(targetInventory, "Company_ID"));
     if (maintenanceInventory) companyIds.add(field(maintenanceInventory, "Company_ID"));
-    if (targetTransaction) {
-      companyIds.add(field(targetTransaction, "Owner_Company_ID"));
-      companyIds.add(field(targetTransaction, "Borrower_Company_ID"));
-    }
+    targetTransactions.forEach((transaction) => { companyIds.add(field(transaction, "Owner_Company_ID")); companyIds.add(field(transaction, "Borrower_Company_ID")); });
+    if (targetTransaction) { companyIds.add(field(targetTransaction, "Owner_Company_ID")); companyIds.add(field(targetTransaction, "Borrower_Company_ID")); }
     const targetUser = userDetails.get(target);
     if (targetUser?.companyId) companyIds.add(targetUser.companyId);
     const actor = userDetails.get(field(record, "User_ID"));
@@ -323,8 +325,8 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       auditContext = { equipmentName: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === field(row.record, "Equip_ID"))?.record || {}, "Equip_Name"), companyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === field(row.record, "Company_ID"))?.record || {}, "Company_Name"), plateNumber: field(row.record, "Plate_Number") };
       updates.push({ range: `'${inventories.name}'!A${row.rowNumber}:${letter(inventories.headers.length - 1)}${row.rowNumber}`, values: [inventories.headers.map(() => "")] });
     } else if (action === "return-transaction") {
-      const transactions = withColumns(transactionSource, ["Return_Date", "Return_User_ID"], updates);
-      const transaction = transactions.rows.find(({ record }) => field(record, "Tx_ID") === target);
+      const transactions = withColumns(transactionSource, ["Transaction_Type", "Parent_Tx_ID", "Original_Qty", "Outstanding_Qty", "Return_Group_ID", "Return_Date", "Return_User_ID", "Return_Evidence_Image"], updates);
+      const transaction = transactions.rows.find(({ record }) => field(record, "Tx_ID") === target && field(record, "Transaction_Type").toLowerCase() !== "return");
       if (!transaction) throw new Error("ไม่พบรายการที่กำลังยืม");
       if (!["borrowed", "overdue"].includes(field(transaction.record, "Status").toLowerCase())) throw new Error("รายการนี้ถูกคืนหรือดำเนินการแล้ว");
       const ownerCompanyId = field(transaction.record, "Owner_Company_ID");
@@ -333,34 +335,39 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       const destinationInventoryId = field(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
       const equipmentId = field(transaction.record, "Equip_ID");
       const plateNumber = field(transaction.record, "Plate_Number");
-      const quantity = number(transaction.record, "Qty");
+      const quantity = number(transaction.record, "Outstanding_Qty") || number(transaction.record, "Qty");
+      const originalQuantity = number(transaction.record, "Original_Qty") || number(transaction.record, "Qty");
       const source = inventories.rows.find(({ record }) => field(record, "Inv_ID") === sourceInventoryId) || inventories.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId && field(record, "Equip_ID") === equipmentId && (!plateNumber || field(record, "Plate_Number") === plateNumber));
-      const destination = inventories.rows.find(({ record }) => field(record, "Inv_ID") === destinationInventoryId) || inventories.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId && field(record, "Equip_ID") === equipmentId && (!plateNumber || field(record, "Plate_Number") === plateNumber));
+      const resolvedEquipmentId = equipmentId || field(source?.record || {}, "Equip_ID");
+      const destination = inventories.rows.find(({ record }) => field(record, "Inv_ID") === destinationInventoryId) || inventories.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId && field(record, "Equip_ID") === resolvedEquipmentId && (!plateNumber || field(record, "Plate_Number") === plateNumber));
       if (!source || !destination || quantity < 1) throw new Error("ไม่พบข้อมูลคลังต้นทางหรือปลายทางสำหรับคืนยุทโธปกรณ์");
       const selfUse = ownerCompanyId === borrowerCompanyId && source.rowNumber === destination.rowNumber;
       const sourceAvailable = number(source.record, "Qty_Available");
       const sourceBorrowed = number(source.record, "Qty_Borrowed");
-      if (sourceBorrowed < quantity) throw new Error("ยอดกำลังยืมในคลังต้นทางไม่เพียงพอ");
       if (selfUse) {
-        updates.push(cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Available"), sourceAvailable + quantity), cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Borrowed"), sourceBorrowed - quantity));
+        updates.push(cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Available"), sourceAvailable + quantity), cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Borrowed"), Math.max(0, sourceBorrowed - quantity)));
       } else {
         const destinationTotal = number(destination.record, "Qty_Total");
         const destinationAvailable = number(destination.record, "Qty_Available");
-        if (destinationTotal < quantity || destinationAvailable < quantity) throw new Error("ยอดในคลังผู้ยืมไม่เพียงพอสำหรับการคืน");
+        if (destinationTotal < quantity) throw new Error("ยอดรวมในคลังผู้ยืมไม่เพียงพอสำหรับการคืน");
         updates.push(
           cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Total"), number(source.record, "Qty_Total") + quantity),
           cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Available"), sourceAvailable + quantity),
-          cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Borrowed"), sourceBorrowed - quantity),
+          cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Borrowed"), Math.max(0, sourceBorrowed - quantity)),
           cell(inventories, destination.rowNumber, requireColumn(inventories, "Qty_Total"), destinationTotal - quantity),
-          cell(inventories, destination.rowNumber, requireColumn(inventories, "Qty_Available"), destinationAvailable - quantity),
+          cell(inventories, destination.rowNumber, requireColumn(inventories, "Qty_Available"), Math.max(0, destinationAvailable - quantity)),
         );
       }
+      const now = new Date().toISOString();
+      const returnGroupId = `RET-${randomUUID()}`;
       updates.push(
+        cell(transactions, transaction.rowNumber, requireColumn(transactions, "Transaction_Type"), "BORROW"),
+        cell(transactions, transaction.rowNumber, requireColumn(transactions, "Original_Qty"), originalQuantity),
+        cell(transactions, transaction.rowNumber, requireColumn(transactions, "Outstanding_Qty"), 0),
         cell(transactions, transaction.rowNumber, requireColumn(transactions, "Status"), "Returned"),
-        cell(transactions, transaction.rowNumber, requireColumn(transactions, "Return_Date"), new Date().toISOString()),
-        cell(transactions, transaction.rowNumber, requireColumn(transactions, "Return_User_ID"), admin.userId),
+        append(transactions, valuesFor(transactions, { Tx_ID: `${returnGroupId}-1`, Group_Tx_ID: returnGroupId, Return_Group_ID: returnGroupId, Transaction_Type: "RETURN", Parent_Tx_ID: target, Owner_Company_ID: ownerCompanyId, Borrower_Company_ID: borrowerCompanyId, User_ID: admin.userId, Inv_ID: sourceInventoryId, Destination_Inventory_ID: destinationInventoryId, Equip_ID: resolvedEquipmentId, Plate_Number: plateNumber, Qty: quantity, Original_Qty: quantity, Outstanding_Qty: 0, Borrow_Date: now, Return_Date: now, Return_User_ID: admin.userId, Status: "Returned", Note: `ผู้ดูแลระบบคืนยุทโธปกรณ์จากรายการ ${target}` })),
       );
-      auditContext = { equipmentName: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === equipmentId)?.record || {}, "Equip_Name"), companyName: `${field(companies.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId)?.record || {}, "Company_Name")} → ${field(companies.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId)?.record || {}, "Company_Name")}`, quantity: String(quantity) };
+      auditContext = { equipmentName: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === resolvedEquipmentId)?.record || {}, "Equip_Name"), companyName: `${field(companies.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId)?.record || {}, "Company_Name")} → ${field(companies.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId)?.record || {}, "Company_Name")}`, quantity: String(quantity) };
     } else if (action === "maintenance-status") {
       const row = maintenance.rows.find(({ record }) => field(record, "Maint_ID") === target);
       if (!row) throw new Error("ไม่พบรายการซ่อม");

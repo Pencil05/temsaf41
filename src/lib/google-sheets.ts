@@ -521,7 +521,7 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
       getField(transaction, "Owner_Company_ID", "OwnerCompanyId") === user.companyId ||
       getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId") === user.companyId,
     )
-    .map((transaction, index) => {
+    .flatMap((transaction, index) => {
       const inventoryId = getField(transaction, "Inv_ID", "Inventory_ID", "InventoryId");
       const equipmentId =
         getField(transaction, "Equip_ID", "Equipment_ID", "EquipId") ||
@@ -531,51 +531,57 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
       const ownerCompanyId = getField(transaction, "Owner_Company_ID", "OwnerCompanyId");
       const borrowerCompanyId = getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId");
       const status = getField(transaction, "Status") || "Unknown";
-      const movementType = status.toLowerCase() === "returned" ? "return" : "borrow";
+      const transactionType = getField(transaction, "Transaction_Type").toLowerCase();
       const transactionId = getField(transaction, "Tx_ID", "Transaction_ID", "TransactionId", "ID") || `TX-${index}`;
-      const transactionUserId = movementType === "return"
-        ? getField(transaction, "Return_User_ID", "Returned_By_User_ID") || returnUsers.get(transactionId) || getField(transaction, "User_ID", "UserId")
-        : getField(transaction, "User_ID", "UserId");
-      const transactionUser = userDetails.get(transactionUserId);
       const generatedGroupId = transactionId.match(/^(TX-\d{8}-[A-F0-9]+)-\d+$/i)?.[1];
-      const groupId = getField(transaction, "Group_Tx_ID", "Borrow_Batch_ID") || generatedGroupId || transactionId;
+      const groupId = getField(transaction, "Group_Tx_ID", "Borrow_Batch_ID", "Return_Group_ID") || generatedGroupId || transactionId;
       const equipmentName = equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์";
-      const quantity = getNumber(transaction, "Qty", "Quantity");
-      return {
-        id: movementType === "borrow" ? groupId : transactionId,
+      const quantity = getNumber(transaction, "Original_Qty") || getNumber(transaction, "Qty", "Quantity");
+      const ownerCompanyName = companyNames.get(ownerCompanyId) || ownerCompanyId;
+      const borrowerCompanyName = companyNames.get(borrowerCompanyId) || borrowerCompanyId;
+      const makeItem = (movementType: "borrow" | "return", itemQuantity: number, itemId: string, itemGroupId: string): UserHistoryItem => {
+        const transactionUserId = movementType === "return"
+          ? getField(transaction, "Return_User_ID", "Returned_By_User_ID") || returnUsers.get(transactionId) || getField(transaction, "User_ID", "UserId")
+          : getField(transaction, "User_ID", "UserId");
+        const transactionUser = userDetails.get(transactionUserId);
+        const dueDate = getField(transaction, "Due_Date", "DueDate");
+        const overdue = movementType === "borrow" && ["borrowed", "overdue"].includes(status.toLowerCase()) && dueDate && new Date(dueDate).getTime() < Date.now();
+        return {
+        id: itemGroupId,
         transactionIds: [transactionId],
         movementType,
         equipmentName,
         items: [{
-          transactionId,
+          transactionId: itemId,
           name: equipmentName,
-          quantity,
+          quantity: itemQuantity,
           plateNumber: getField(transaction, "Plate_Number", "PlateNumber") || undefined,
         }],
         borrowerName: transactionUser?.name || transactionUserId || "ไม่ระบุผู้ทำรายการ",
         contactPhone: transactionUser?.phone || "",
         contactEmail: transactionUser?.email || "",
-        quantity,
-        ownerCompanyName: movementType === "return" ? companyNames.get(borrowerCompanyId) || borrowerCompanyId : companyNames.get(ownerCompanyId) || ownerCompanyId,
-        borrowerCompanyName: movementType === "return" ? companyNames.get(ownerCompanyId) || ownerCompanyId : companyNames.get(borrowerCompanyId) || borrowerCompanyId,
+        quantity: itemQuantity,
+        ownerCompanyName: movementType === "return" ? borrowerCompanyName : ownerCompanyName,
+        borrowerCompanyName: movementType === "return" ? ownerCompanyName : borrowerCompanyName,
         date: movementType === "return"
           ? getField(transaction, "Return_Date", "Returned_At") || getField(transaction, "Borrow_Date", "Transaction_Date", "Date")
           : getField(transaction, "Borrow_Date", "Transaction_Date", "Date"),
-        dueDate: getField(transaction, "Due_Date", "DueDate"),
-        status,
+        dueDate,
+        status: overdue ? "Overdue" : status,
         note: getField(transaction, "Note", "Remarks") || "-",
         evidenceImage: movementType === "return"
-          ? getField(transaction, "Return_Evidence_Image", "Return_Evidence", "Returned_Evidence_Image")
+          ? getField(transaction, "Return_Evidence_Image", "Return_Evidence", "Returned_Evidence_Image", "Evidence_Image", "Evidence")
           : getField(transaction, "Evidence_Image", "Evidence", "Evidence_File"),
+        };
       };
+      if (transactionType === "return") return [makeItem("return", getNumber(transaction, "Qty", "Quantity"), transactionId, groupId)];
+      const borrowItem = makeItem("borrow", quantity, transactionId, groupId);
+      if (transactionType === "borrow" || status.toLowerCase() !== "returned") return [borrowItem];
+      const legacyReturn = makeItem("return", getNumber(transaction, "Qty", "Quantity"), transactionId, transactionId);
+      return [borrowItem, legacyReturn];
     });
   const transactionHistory = [...rawTransactionHistory.reduce((groups, item) => {
-    if (item.movementType !== "borrow") {
-      groups.set(`return:${item.id}`, item);
-      return groups;
-    }
-
-    const key = `borrow:${item.id}`;
+    const key = `${item.movementType}:${item.id}`;
     const current = groups.get(key);
     if (!current) {
       groups.set(key, item);
@@ -586,12 +592,12 @@ export async function getUserTransactionHistory(user: SessionUser): Promise<User
     groups.set(key, {
       ...current,
       transactionIds: [...current.transactionIds, ...item.transactionIds],
-      equipmentName: items.length > 1 ? `เบิกยุทโธปกรณ์ ${items.length} รายการ` : items[0].name,
+      equipmentName: items.length > 1 ? `${item.movementType === "return" ? "คืน" : "เบิก"}ยุทโธปกรณ์ ${items.length} รายการ` : items[0].name,
       items,
       quantity: current.quantity + item.quantity,
       status: current.status.toLowerCase() === "overdue" || item.status.toLowerCase() === "overdue"
         ? "Overdue"
-        : current.status,
+        : current.status.toLowerCase() === "returned" && item.status.toLowerCase() === "returned" ? "Returned" : "Borrowed",
       evidenceImage: current.evidenceImage || item.evidenceImage,
     });
     return groups;

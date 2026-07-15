@@ -187,6 +187,7 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
     value(row.record, "Equip_ID", "Equipment_ID", "EquipId"),
   ]));
   const returns = transactions.rows.filter(({ record }) =>
+    value(record, "Transaction_Type").toLowerCase() !== "return" &&
     value(record, "Borrower_Company_ID", "BorrowerCompanyId") === user.companyId &&
     ["borrowed", "overdue"].includes(value(record, "Status").toLowerCase()),
   ).map((transaction) => {
@@ -201,7 +202,7 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
     return {
       transactionId: value(record, "Tx_ID", "Transaction_ID", "TransactionId", "ID"),
       name: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อ",
-      quantity: numberValue(record, "Qty", "Quantity"),
+      quantity: numberValue(record, "Outstanding_Qty") || numberValue(record, "Qty", "Quantity"),
       ownerCompanyId,
       ownerCompanyName: companyNames.get(ownerCompanyId) || ownerCompanyId,
       selfUse: ownerCompanyId === value(record, "Borrower_Company_ID", "BorrowerCompanyId"),
@@ -229,7 +230,7 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
 
 export async function returnEquipment(
   user: SessionUser,
-  input: { transactionId: string; quantity: number; evidenceImage?: string },
+  input: { transactionId?: string; quantity?: number; items?: Array<{ transactionId: string; quantity: number }>; evidenceImage?: string },
 ) {
   return withSheetsMutationLock(async () => {
     const [transactionSource, inventories, audits] = await Promise.all([
@@ -239,87 +240,74 @@ export async function returnEquipment(
     if (evidenceImage && (!evidenceImage.startsWith("data:image/jpeg;base64,") || evidenceImage.length > 45_000)) {
       throw new InventoryActionError("รูปหลักฐานการคืนไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");
     }
+    const requests = input.items?.length ? input.items : input.transactionId ? [{ transactionId: input.transactionId, quantity: Number(input.quantity) }] : [];
+    if (!requests.length) throw new InventoryActionError("กรุณาเลือกรายการที่ต้องการคืน");
+    if (new Set(requests.map((item) => item.transactionId)).size !== requests.length) throw new InventoryActionError("พบรายการคืนซ้ำกัน");
     const updates: Update[] = [];
-    const transactions = withColumns(transactionSource, ["Return_Evidence_Image"], updates);
-    const transaction = transactions.rows.find(({ record }) =>
-      value(record, "Tx_ID", "Transaction_ID", "TransactionId", "ID") === input.transactionId,
-    );
-    if (!transaction) throw new InventoryActionError("ไม่พบรายการที่กำลังยืม");
-    if (!["borrowed", "overdue"].includes(value(transaction.record, "Status").toLowerCase())) throw new InventoryActionError("รายการนี้ถูกดำเนินการแล้ว");
-    const ownerCompanyId = value(transaction.record, "Owner_Company_ID", "OwnerCompanyId");
-    const sourceInventoryId = value(transaction.record, "Inv_ID", "Inventory_ID", "InventoryId");
-    const destinationInventoryId = value(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
-    const borrowerCompanyId = value(transaction.record, "Borrower_Company_ID", "BorrowerCompanyId");
-    const plateNumber = value(transaction.record, "Plate_Number", "PlateNumber");
-    if (borrowerCompanyId !== user.companyId) throw new InventoryActionError("หน่วยของคุณไม่มีสิทธิ์คืนรายการนี้");
-    const directEquipmentId = value(transaction.record, "Equip_ID", "Equipment_ID", "EquipId");
-    const sourceInventory = inventories.rows.find((row) =>
-      sourceInventoryId && inventoryKey(row) === sourceInventoryId &&
-      (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
-    ) ||
-      inventories.rows.find((row) =>
-        directEquipmentId && value(row.record, "Company_ID", "CompanyId") === ownerCompanyId &&
-        value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === directEquipmentId &&
-        (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
-      ) || inferLegacySourceInventory(transaction, inventories.rows);
-    const equipmentId = directEquipmentId || value(sourceInventory?.record ?? {}, "Equip_ID", "Equipment_ID", "EquipId");
-    const destinationInventory = inventories.rows.find((row) =>
-      ((destinationInventoryId && inventoryKey(row) === destinationInventoryId) ||
-      (value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId)) &&
-      (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
-    );
-    if (!sourceInventory || !destinationInventory) throw new InventoryActionError("ไม่พบคลังต้นทางหรือปลายทาง");
-    const selfUse = ownerCompanyId === borrowerCompanyId && sourceInventory.rowNumber === destinationInventory.rowNumber;
-    const borrowedQuantity = numberValue(transaction.record, "Qty", "Quantity");
-    const quantity = Math.floor(Number(input.quantity));
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > borrowedQuantity) {
-      throw new InventoryActionError(`คืนได้สูงสุด ${borrowedQuantity} รายการ`);
-    }
-    const remainingQuantity = borrowedQuantity - quantity;
-    const sourceTotal = numberValue(sourceInventory.record, "Qty_Total", "Total_Quantity");
-    const sourceAvailable = numberValue(sourceInventory.record, "Qty_Available", "Available_Quantity");
-    const sourceBorrowed = numberValue(sourceInventory.record, "Qty_Borrowed", "Borrowed_Quantity");
-    const destinationTotal = numberValue(destinationInventory.record, "Qty_Total", "Total_Quantity");
-    const destinationAvailable = numberValue(destinationInventory.record, "Qty_Available", "Available_Quantity");
-    if (!selfUse && (destinationAvailable < quantity || destinationTotal < quantity)) {
-      throw new InventoryActionError("จำนวนในคลังปลายทางไม่เพียงพอสำหรับการคืน");
+    const transactions = withColumns(transactionSource, ["Transaction_Type", "Parent_Tx_ID", "Original_Qty", "Outstanding_Qty", "Return_Group_ID", "Return_Date", "Return_User_ID", "Return_Evidence_Image"], updates);
+    const selected = requests.map((request) => {
+      const transaction = transactions.rows.find(({ record }) => value(record, "Tx_ID", "Transaction_ID", "TransactionId", "ID") === request.transactionId && value(record, "Transaction_Type").toLowerCase() !== "return");
+      if (!transaction) throw new InventoryActionError("ไม่พบรายการที่กำลังยืม");
+      if (!["borrowed", "overdue"].includes(value(transaction.record, "Status").toLowerCase())) throw new InventoryActionError("มีรายการที่ถูกคืนหรือดำเนินการแล้ว");
+      const ownerCompanyId = value(transaction.record, "Owner_Company_ID", "OwnerCompanyId");
+      const borrowerCompanyId = value(transaction.record, "Borrower_Company_ID", "BorrowerCompanyId");
+      if (borrowerCompanyId !== user.companyId) throw new InventoryActionError("หน่วยของคุณไม่มีสิทธิ์คืนรายการนี้");
+      const sourceInventoryId = value(transaction.record, "Inv_ID", "Inventory_ID", "InventoryId");
+      const destinationInventoryId = value(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
+      const plateNumber = value(transaction.record, "Plate_Number", "PlateNumber");
+      const directEquipmentId = value(transaction.record, "Equip_ID", "Equipment_ID", "EquipId");
+      const sourceInventory = inventories.rows.find((row) => sourceInventoryId && inventoryKey(row) === sourceInventoryId && (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber)) || inventories.rows.find((row) => directEquipmentId && value(row.record, "Company_ID", "CompanyId") === ownerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === directEquipmentId && (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber)) || inferLegacySourceInventory(transaction, inventories.rows);
+      const equipmentId = directEquipmentId || value(sourceInventory?.record ?? {}, "Equip_ID", "Equipment_ID", "EquipId");
+      const destinationInventory = inventories.rows.find((row) => ((destinationInventoryId && inventoryKey(row) === destinationInventoryId) || (value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId)) && (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber));
+      if (!sourceInventory || !destinationInventory) throw new InventoryActionError("ไม่พบคลังต้นทางหรือปลายทาง");
+      const originalQuantity = numberValue(transaction.record, "Original_Qty") || numberValue(transaction.record, "Qty", "Quantity");
+      const outstandingQuantity = numberValue(transaction.record, "Outstanding_Qty") || numberValue(transaction.record, "Qty", "Quantity");
+      const quantity = Math.floor(Number(request.quantity));
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > outstandingQuantity) throw new InventoryActionError(`คืน ${request.transactionId} ได้สูงสุด ${outstandingQuantity} รายการ`);
+      return { transaction, ownerCompanyId, borrowerCompanyId, sourceInventory, destinationInventory, equipmentId, plateNumber, originalQuantity, outstandingQuantity, quantity, selfUse: ownerCompanyId === borrowerCompanyId && sourceInventory.rowNumber === destinationInventory.rowNumber };
+    });
+    if (new Set(selected.map((item) => item.ownerCompanyId)).size !== 1) throw new InventoryActionError("รายการที่คืนพร้อมกันต้องมาจากกองร้อยเจ้าของเดียวกัน");
+    const changes = new Map<number, { row: Table["rows"][number]; total: number; available: number; borrowed: number }>();
+    const change = (row: Table["rows"][number], total: number, available: number, borrowed: number) => { const current = changes.get(row.rowNumber) || { row, total: 0, available: 0, borrowed: 0 }; current.total += total; current.available += available; current.borrowed += borrowed; changes.set(row.rowNumber, current); };
+    selected.forEach((item) => { change(item.sourceInventory, item.selfUse ? 0 : item.quantity, item.quantity, -item.quantity); if (!item.selfUse) change(item.destinationInventory, -item.quantity, -item.quantity, 0); });
+    for (const item of changes.values()) {
+      const total = numberValue(item.row.record, "Qty_Total", "Total_Quantity") + item.total;
+      const available = numberValue(item.row.record, "Qty_Available", "Available_Quantity") + item.available;
+      const borrowed = numberValue(item.row.record, "Qty_Borrowed", "Borrowed_Quantity") + item.borrowed;
+      if (total < 0 || available < 0 || borrowed < 0) throw new InventoryActionError("ยอดคลังไม่เพียงพอสำหรับรายการคืนที่เลือก");
+      updates.push(cell(inventories, item.row.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), total), cell(inventories, item.row.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), available), cell(inventories, item.row.rowNumber, column(inventories.headers, "Qty_Borrowed", "Borrowed_Quantity"), borrowed));
     }
     const now = new Date().toISOString();
-    if (selfUse) {
+    const returnGroupId = `RET-${crypto.randomUUID()}`;
+    let returnRowNumber = nextRow(transactions);
+    selected.forEach((item, index) => {
+      const remaining = item.outstandingQuantity - item.quantity;
       updates.push(
-        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), sourceAvailable + quantity),
-        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Borrowed", "Borrowed_Quantity"), Math.max(0, sourceBorrowed - quantity)),
+        cell(transactions, item.transaction.rowNumber, column(transactions.headers, "Transaction_Type"), "BORROW"),
+        cell(transactions, item.transaction.rowNumber, column(transactions.headers, "Original_Qty"), item.originalQuantity),
+        cell(transactions, item.transaction.rowNumber, column(transactions.headers, "Outstanding_Qty"), remaining),
+        cell(transactions, item.transaction.rowNumber, column(transactions.headers, "Status"), remaining === 0 ? "Returned" : "Borrowed"),
       );
-    } else {
-      updates.push(
-        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), sourceTotal + quantity),
-        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), sourceAvailable + quantity),
-        cell(inventories, sourceInventory.rowNumber, column(inventories.headers, "Qty_Borrowed", "Borrowed_Quantity"), Math.max(0, sourceBorrowed - quantity)),
-        cell(inventories, destinationInventory.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), destinationTotal - quantity),
-        cell(inventories, destinationInventory.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), destinationAvailable - quantity),
-      );
-    }
-    updates.push(
-      cell(transactions, transaction.rowNumber, column(transactions.headers, "Qty", "Quantity"), remainingQuantity || quantity),
-      cell(transactions, transaction.rowNumber, column(transactions.headers, "Status"), remainingQuantity === 0 ? "Returned" : "Borrowed"),
-    );
-    const returnDateColumn = column(transactions.headers, "Return_Date", "Returned_At");
-    if (returnDateColumn >= 0) updates.push(cell(transactions, transaction.rowNumber, returnDateColumn, now));
-    const returnUserColumn = column(transactions.headers, "Return_User_ID", "Returned_By_User_ID");
-    if (returnUserColumn >= 0) updates.push(cell(transactions, transaction.rowNumber, returnUserColumn, user.userId));
-    const returnEvidenceColumn = column(transactions.headers, "Return_Evidence_Image", "Return_Evidence", "Returned_Evidence_Image");
-    if (returnEvidenceColumn >= 0) updates.push(cell(transactions, transaction.rowNumber, returnEvidenceColumn, evidenceImage));
+      const returnId = `${returnGroupId}-${index + 1}`;
+      const row = rowValues(transactions.headers, [
+        { aliases: ["Tx_ID", "Transaction_ID", "ID"], value: returnId }, { aliases: ["Group_Tx_ID", "Borrow_Batch_ID"], value: returnGroupId }, { aliases: ["Return_Group_ID"], value: returnGroupId }, { aliases: ["Transaction_Type"], value: "RETURN" }, { aliases: ["Parent_Tx_ID"], value: value(item.transaction.record, "Tx_ID") },
+        { aliases: ["Owner_Company_ID"], value: item.ownerCompanyId }, { aliases: ["Borrower_Company_ID"], value: item.borrowerCompanyId }, { aliases: ["User_ID"], value: user.userId }, { aliases: ["Inv_ID"], value: value(item.transaction.record, "Inv_ID") }, { aliases: ["Destination_Inventory_ID", "Borrower_Inventory_ID"], value: value(item.transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID") }, { aliases: ["Equip_ID"], value: item.equipmentId }, { aliases: ["Plate_Number"], value: item.plateNumber },
+        { aliases: ["Qty", "Quantity"], value: item.quantity }, { aliases: ["Original_Qty"], value: item.quantity }, { aliases: ["Outstanding_Qty"], value: 0 }, { aliases: ["Borrow_Date", "Transaction_Date", "Date"], value: now }, { aliases: ["Return_Date"], value: now }, { aliases: ["Return_User_ID"], value: user.userId }, { aliases: ["Status"], value: "Returned" }, { aliases: ["Note", "Remarks"], value: `คืนยุทโธปกรณ์จากรายการ ${value(item.transaction.record, "Tx_ID")}` }, { aliases: ["Evidence_Image", "Return_Evidence_Image"], value: evidenceImage },
+      ]);
+      updates.push({ range: `'${transactions.name}'!A${returnRowNumber}:${letter(transactions.headers.length - 1)}${returnRowNumber}`, values: [row] });
+      returnRowNumber += 1;
+    });
     updates.push(append(audits, rowValues(audits.headers, [
       { aliases: ["Log_ID", "Audit_ID", "ID"], value: `AUD-${crypto.randomUUID()}` },
       { aliases: ["Timestamp", "Created_At", "Date"], value: now },
       { aliases: ["User_ID", "UserId"], value: user.userId },
       { aliases: ["Action_Type", "Action"], value: "RETURN" },
       { aliases: ["Table_Name", "Target_Table"], value: "Transactions" },
-      { aliases: ["Target_ID", "Record_ID", "Tx_ID"], value: input.transactionId },
-      { aliases: ["Details", "Description"], value: `Returned ${quantity} item(s)` },
+      { aliases: ["Target_ID", "Record_ID", "Tx_ID"], value: returnGroupId },
+      { aliases: ["Details", "Description"], value: `Returned ${selected.length} transaction item(s)` },
     ])));
     await write(updates);
-    return { success: true };
+    return { success: true, returnGroupId };
   });
 }
 

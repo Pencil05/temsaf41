@@ -5,6 +5,7 @@ import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
+import { EquipmentImage } from "@/components/equipment/equipment-image";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
 import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
@@ -17,8 +18,8 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>(initialMode);
-  const [transactionId, setTransactionId] = useState("");
-  const [returnQuantity, setReturnQuantity] = useState<number | "">(1);
+  const [returnSelections, setReturnSelections] = useState<Record<string, number | "">>({});
+  const [returnReferenceId, setReturnReferenceId] = useState("");
   const [returnEvidenceName, setReturnEvidenceName] = useState("");
   const [returnEvidenceImage, setReturnEvidenceImage] = useState("");
   const [isPreparingReturnEvidence, setIsPreparingReturnEvidence] = useState(false);
@@ -39,7 +40,11 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   const returnReceiptRef = useRef<HTMLDivElement>(null);
 
   const defect = data.defects.find((item) => `${item.sourceType}:${item.sourceId}` === defectKey);
-  const selectedReturn = data.returns.find((item) => item.transactionId === transactionId);
+  const selectedReturns = data.returns.filter((item) => returnSelections[item.transactionId] !== undefined);
+  const selectedOwnerId = selectedReturns[0]?.ownerCompanyId || "";
+  const selectedOwnerName = selectedReturns[0]?.ownerCompanyName || "";
+  const selectedSelfUse = selectedReturns.length > 0 && selectedReturns.every((item) => item.selfUse);
+  const returnGroups = [...data.returns.reduce((groups, item) => { const records = groups.get(item.ownerCompanyId) || []; records.push(item); groups.set(item.ownerCompanyId, records); return groups; }, new Map<string, DashboardActionData["returns"]>())];
 
   usePopupDismiss(mode !== null && !returnReview, closeMode);
   usePopupDismiss(returnReview && !returnDownloadOpen, () => {
@@ -57,13 +62,21 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   }
 
   function chooseReturn(id: string) {
-    setTransactionId(id);
-    setReturnQuantity(1);
+    const item = data.returns.find((entry) => entry.transactionId === id);
+    if (!item) return;
+    setReturnSelections((current) => {
+      const next = { ...current };
+      if (next[id] !== undefined) delete next[id];
+      else if (!selectedOwnerId || item.ownerCompanyId === selectedOwnerId) next[id] = item.quantity;
+      return next;
+    });
   }
 
   function openReturn() {
     setReturnEvidenceName("");
     setReturnEvidenceImage("");
+    setReturnSelections({});
+    setReturnReferenceId("");
     setMode("return");
   }
 
@@ -86,15 +99,14 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
     }
   }
 
-  function updateReturnQuantity(rawValue: string) {
+  function updateReturnQuantity(transactionId: string, rawValue: string) {
     if (rawValue === "") {
-      setReturnQuantity("");
+      setReturnSelections((current) => ({ ...current, [transactionId]: "" }));
       return;
     }
-
-    const maximum = selectedReturn?.quantity || 1;
+    const maximum = data.returns.find((item) => item.transactionId === transactionId)?.quantity || 1;
     const nextQuantity = Math.floor(Number(rawValue) || 1);
-    setReturnQuantity(Math.max(1, Math.min(maximum, nextQuantity)));
+    setReturnSelections((current) => ({ ...current, [transactionId]: Math.max(1, Math.min(maximum, nextQuantity)) }));
   }
 
   function chooseDefect(key: string) {
@@ -131,9 +143,8 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
 
   function submitReturn(event: FormEvent) {
     event.preventDefault();
-    const requestedQuantity = Number(returnQuantity);
-
-    if (!selectedReturn || requestedQuantity < 1 || requestedQuantity > selectedReturn.quantity) {
+    const invalid = selectedReturns.find((item) => Number(returnSelections[item.transactionId]) < 1 || Number(returnSelections[item.transactionId]) > item.quantity);
+    if (!selectedReturns.length || invalid || new Set(selectedReturns.map((item) => item.ownerCompanyId)).size !== 1) {
       setMessage({ type: "error", text: "กรุณาตรวจสอบรายการและจำนวนที่ต้องการคืน" });
       return;
     }
@@ -142,18 +153,16 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   }
 
   async function confirmReturn() {
-    if (!selectedReturn) return;
-
-    const requestedQuantity = Number(returnQuantity);
+    if (!selectedReturns.length) return;
     setSubmitting(true);
 
     const response = await fetch("/api/return", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transactionId, quantity: requestedQuantity, evidenceImage: returnEvidenceImage }),
+      body: JSON.stringify({ items: selectedReturns.map((item) => ({ transactionId: item.transactionId, quantity: Number(returnSelections[item.transactionId]) })), evidenceImage: returnEvidenceImage }),
     });
 
-    const payload = (await response.json()) as { error?: string };
+    const payload = (await response.json()) as { error?: string; returnGroupId?: string };
     setSubmitting(false);
 
     if (!response.ok) {
@@ -162,18 +171,19 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
     }
 
     setReturnCompleted(true);
+    setReturnReferenceId(payload.returnGroupId || `RET-${Date.now()}`);
     setReturnCompletedAt(new Date().toISOString());
     setMessage({ type: "success", text: "คืนยุทโธปกรณ์เรียบร้อยแล้ว" });
   }
 
   async function downloadReturnReceipt(format: "jpg" | "pdf") {
-    if (!returnReceiptRef.current || !selectedReturn) return;
+    if (!returnReceiptRef.current || !selectedReturns.length) return;
     setReceiptDownloading(true);
     try {
       const image = await receiptCanvas(returnReceiptRef.current);
       if (format === "jpg") {
         const link = document.createElement("a");
-        link.download = `RETURN-${selectedReturn.transactionId}.jpg`;
+        link.download = `${returnReferenceId || "RETURN"}.jpg`;
         link.href = image.toDataURL("image/jpeg", 0.95);
         link.click();
       } else {
@@ -181,7 +191,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
         const document = new jsPDF();
         const width = 186;
         document.addImage(image.toDataURL("image/jpeg", 0.95), "JPEG", 12, 12, width, image.height * width / image.width);
-        document.save(`RETURN-${selectedReturn.transactionId}.pdf`);
+        document.save(`${returnReferenceId || "RETURN"}.pdf`);
       }
       setReturnDownloadOpen(false);
     } catch {
@@ -196,7 +206,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
     setReturnCompleted(false);
     setReturnCompletedAt("");
     setReturnDownloadOpen(false);
-    setTransactionId("");
+    setReturnSelections({});
     closeMode();
     router.refresh();
   }
@@ -289,51 +299,15 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
       {mode === "return" && !returnReview && (
         <Modal title="คืนยุทโธปกรณ์" onClose={closeMode}>
           <form onSubmit={submitReturn} className="space-y-4">
-            <label className="block">
-              <span className="mb-2 block text-sm font-semibold">รายการที่ถือครอง</span>
-              <select
-                value={transactionId}
-                onChange={(event) => chooseReturn(event.target.value)}
-                className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3"
-                required
-              >
-                <option value="">เลือกรายการ</option>
-                {data.returns.map((item) => (
-                  <option key={item.transactionId} value={item.transactionId}>
-                    {item.name} จำนวน {item.quantity}{item.selfUse ? " · ใช้งานภายในหน่วย" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="mb-2 flex items-center justify-between text-sm font-semibold">
-                <span>จำนวนที่ต้องการคืน</span>
-                <span className="text-xs font-medium text-slate-500">สูงสุด {selectedReturn?.quantity || 0}</span>
-              </span>
-              <input
-                type="number"
-                inputMode="numeric"
-                step={1}
-                min={1}
-                max={selectedReturn?.quantity || 1}
-                value={returnQuantity}
-                onChange={(event) => updateReturnQuantity(event.target.value)}
-                onBlur={() => {
-                  if (returnQuantity === "") setReturnQuantity(1);
-                }}
-                disabled={!selectedReturn}
-                className="h-12 w-full rounded-xl border border-slate-200 px-3 disabled:bg-slate-100 disabled:text-slate-400"
-              />
-            </label>
+            <div><div className="mb-2 flex items-center justify-between"><span className="text-sm font-semibold">เลือกรายการที่ต้องการคืน</span><span className="text-xs font-semibold text-emerald-700">เลือกแล้ว {selectedReturns.length} รายการ</span></div><p className="mb-3 text-xs leading-5 text-slate-500">คืนพร้อมกันได้หลายรายการ แต่ต้องเป็นยุทโธปกรณ์ที่ยืมมาจากกองร้อยเจ้าของเดียวกัน</p><div className="max-h-[42dvh] space-y-4 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">{returnGroups.map(([ownerId, records]) => <section key={ownerId}><div className="sticky top-0 z-10 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">คืนไปยัง {records[0]?.ownerCompanyName}</div><div className="mt-2 space-y-2">{records.map((item) => { const checked = returnSelections[item.transactionId] !== undefined; const disabled = Boolean(selectedOwnerId && selectedOwnerId !== item.ownerCompanyId); return <div key={item.transactionId} className={`rounded-2xl border bg-white p-3 transition ${checked ? "border-emerald-400 shadow-md" : "border-slate-200"} ${disabled ? "opacity-45" : "active:scale-[0.99]"}`}><div className="flex items-center gap-3"><button type="button" disabled={disabled} onClick={() => chooseReturn(item.transactionId)} className="flex min-w-0 flex-1 items-center gap-3 text-left"><span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 p-1"><EquipmentImage name={item.name} className="size-full" /></span><span className="min-w-0 flex-1"><span className="block truncate font-bold">{item.name}</span><span className="block text-xs text-slate-500">คงค้าง {item.quantity.toLocaleString("th-TH")} {item.selfUse ? "· ใช้งานภายในหน่วย" : ""}</span></span><span className={`grid size-6 shrink-0 place-items-center rounded-full border-2 ${checked ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"}`}>{checked && <CheckCircle2 className="size-4" />}</span></button></div>{checked && <label className="mt-3 block border-t border-slate-100 pt-3"><span className="mb-1 flex justify-between text-xs font-semibold"><span>จำนวนที่คืน</span><span>สูงสุด {item.quantity}</span></span><input type="number" min={1} max={item.quantity} value={returnSelections[item.transactionId]} onChange={(event) => updateReturnQuantity(item.transactionId, event.target.value)} onBlur={() => { if (returnSelections[item.transactionId] === "") setReturnSelections((current) => ({ ...current, [item.transactionId]: 1 })); }} className="h-10 w-full rounded-xl border border-slate-200 px-3" /></label>}</div>; })}</div></section>)}</div></div>
 
             <div>
-              <span className="mb-2 block text-sm font-semibold">{selectedReturn?.selfUse ? "คืนเข้าคลังเดิม" : "คืนไปยังหน่วยเจ้าของเดิม"}</span>
+              <span className="mb-2 block text-sm font-semibold">{selectedSelfUse ? "คืนเข้าคลังเดิม" : "กองร้อยปลายทางที่รับคืน"}</span>
               <div className="flex min-h-12 items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 font-semibold text-emerald-800">
-                {selectedReturn?.ownerCompanyName || "เลือกรายการที่ต้องการคืนก่อน"}
+                {selectedOwnerName || "เลือกรายการที่ต้องการคืนก่อน"}
               </div>
               <span className="mt-2 block text-xs text-slate-500">
-                {selectedReturn?.selfUse ? "รายการนี้เป็นการเบิกใช้งานภายในหน่วย ระบบจะคืนยอดกลับเข้าคลังเดิม" : "ระบบกำหนดปลายทางจากรายการยืมโดยอัตโนมัติ ไม่สามารถเปลี่ยนหน่วยรับคืนได้"}
+                {selectedSelfUse ? "รายการนี้เป็นการเบิกใช้งานภายในหน่วย ระบบจะคืนยอดกลับเข้าคลังเดิม" : "ระบบล็อกให้ทุกรายการในใบคืนฉบับเดียวกันส่งกลับกองร้อยเจ้าของเดียวกัน"}
               </span>
             </div>
 
@@ -406,7 +380,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
         </Modal>
       )}
 
-      {returnReview && selectedReturn && (
+      {returnReview && selectedReturns.length > 0 && (
         <div className="popup-backdrop fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) { if (returnCompleted) closeCompletedReturn(); else setReturnReview(false); } }}>
           <div className="popup-panel max-h-[95vh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-slate-100 p-4 shadow-2xl sm:rounded-[30px]">
             <div className="mb-3 px-1">
@@ -424,17 +398,17 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
             <div ref={returnReceiptRef}>
             <ReceiptDocument
               title={returnCompleted ? "รายละเอียดการคืนยุทโธปกรณ์" : "สลิปตรวจสอบการคืนยุทโธปกรณ์"}
-              referenceId={selectedReturn.transactionId}
+              referenceId={returnCompleted ? returnReferenceId : "รอยืนยันการบันทึก"}
               status={returnCompleted ? "คืนแล้ว" : "รอยืนยันการคืน"}
               date={returnCompletedAt || new Date().toISOString()}
               operatorName={data.userName}
               contactPhone={data.contactPhone}
               contactEmail={data.contactEmail}
               ownerCompanyName={data.companyName}
-              borrowerCompanyName={selectedReturn.ownerCompanyName}
-              note={selectedReturn.selfUse ? "คืนยุทโธปกรณ์จากการใช้งานภายในหน่วยเข้าคลังเดิม" : "คืนไปยังหน่วยเจ้าของเดิม"}
+              borrowerCompanyName={selectedOwnerName}
+              note={selectedSelfUse ? "คืนยุทโธปกรณ์จากการใช้งานภายในหน่วยเข้าคลังเดิม" : "คืนยุทโธปกรณ์หลายรายการไปยังกองร้อยเจ้าของเดิม"}
               evidenceImage={returnEvidenceImage}
-              items={[{ name: selectedReturn.name, quantity: Number(returnQuantity) }]}
+              items={selectedReturns.map((item) => ({ name: item.name, quantity: Number(returnSelections[item.transactionId]) }))}
             />
             </div>
 
@@ -472,7 +446,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
         </div>
       )}
 
-      {returnDownloadOpen && returnCompleted && selectedReturn && (
+      {returnDownloadOpen && returnCompleted && selectedReturns.length > 0 && (
         <div className="popup-backdrop fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/45 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setReturnDownloadOpen(false); }}>
           <div className="popup-panel w-full max-w-xs rounded-[26px] bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between">
