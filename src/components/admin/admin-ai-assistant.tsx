@@ -86,6 +86,36 @@ export function AdminAiAssistant() {
     });
   }
 
+  function audioBufferToWav(audioBuffer: AudioBuffer) {
+    const channels = audioBuffer.numberOfChannels;
+    const frameCount = audioBuffer.length;
+    const dataLength = frameCount * 2;
+    const buffer = new ArrayBuffer(44 + dataLength);
+    const view = new DataView(buffer);
+    const writeText = (offset: number, text: string) => { for (let index = 0; index < text.length; index += 1) view.setUint8(offset + index, text.charCodeAt(index)); };
+    writeText(0, "RIFF");
+    view.setUint32(4, 36 + dataLength, true);
+    writeText(8, "WAVE");
+    writeText(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, audioBuffer.sampleRate, true);
+    view.setUint32(28, audioBuffer.sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeText(36, "data");
+    view.setUint32(40, dataLength, true);
+    const channelData = Array.from({ length: channels }, (_, index) => audioBuffer.getChannelData(index));
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      let sample = 0;
+      for (const channel of channelData) sample += channel[frame] || 0;
+      sample = Math.max(-1, Math.min(1, sample / channels));
+      view.setInt16(44 + frame * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return new Blob([buffer], { type: "audio/wav" });
+  }
+
   async function toggleMicrophone() {
     if (listening) { stopMicrophone(); return; }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -103,16 +133,16 @@ export function AdminAiAssistant() {
         setListening(false);
         stream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
-        if (audioContextRef.current) await audioContextRef.current.close().catch(() => undefined);
-        audioContextRef.current = null;
-        if (discardRecordingRef.current) { discardRecordingRef.current = false; return; }
+        const decodingContext = audioContextRef.current;
+        if (discardRecordingRef.current) { discardRecordingRef.current = false; if (decodingContext) await decodingContext.close().catch(() => undefined); audioContextRef.current = null; return; }
         const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        if (blob.size < 1_000) return;
+        if (blob.size < 1_000 || !decodingContext) { if (decodingContext) await decodingContext.close().catch(() => undefined); audioContextRef.current = null; return; }
         setLoading(true);
         try {
-          const audio = await blobToBase64(blob);
-          const apiMimeType = blob.type.includes("webm") ? "video/webm" : blob.type.includes("mp4") ? "video/mp4" : blob.type.split(";")[0];
-          const response = await fetch("/api/admin/assistant/transcribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audio, mimeType: apiMimeType }) });
+          const decodedAudio = await decodingContext.decodeAudioData(await blob.arrayBuffer());
+          const wavBlob = audioBufferToWav(decodedAudio);
+          const audio = await blobToBase64(wavBlob);
+          const response = await fetch("/api/admin/assistant/transcribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audio, mimeType: "audio/wav" }) });
           const result = await response.json() as { transcript?: string; error?: string };
           if (!response.ok || !result.transcript) throw new Error(result.error || "ถอดเสียงไม่สำเร็จ");
           setInput(result.transcript);
@@ -120,7 +150,7 @@ export function AdminAiAssistant() {
           await sendMessage(result.transcript);
         } catch (error) {
           setMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "ถอดเสียงไม่สำเร็จ" }]);
-        } finally { setLoading(false); }
+        } finally { await decodingContext.close().catch(() => undefined); audioContextRef.current = null; setLoading(false); }
       };
       recorderRef.current = recorder;
       discardRecordingRef.current = false;
