@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { google } from "googleapis";
 import type { SessionUser } from "@/lib/auth-session";
-import { hashPassword } from "@/lib/password-utils";
+import { hashPassword, verifyPassword } from "@/lib/password-utils";
 import { getEquipmentImage } from "@/lib/equipment-images";
 import { withSheetsMutationLock } from "@/lib/sheets-mutation-lock";
 
@@ -78,13 +78,13 @@ const norm = (value: string) => value.toLowerCase().replace(/[\s_-]/g, "");
 const field = (record: Record<string, string>, ...names: string[]) => record[Object.keys(record).find((key) => names.some((name) => norm(key) === norm(name))) || ""] || "";
 const number = (record: Record<string, string>, ...names: string[]) => Number(field(record, ...names).replace(/,/g, "")) || 0;
 const detailLabels: Record<string, string> = { action: "คำสั่ง", id: "รหัสรายการ", companyId: "กองร้อย", companyName: "ชื่อกองร้อย", equipmentId: "ยุทโธปกรณ์", equipmentName: "ชื่อยุทโธปกรณ์", userName: "ชื่อผู้ใช้งาน", sourceInventoryId: "คลังต้นทาง", destinationCompanyId: "กองร้อยปลายทาง", quantity: "จำนวน", total: "จำนวนรวม", available: "พร้อมใช้", borrowed: "ถูกยืม", broken: "ชำรุด", status: "สถานะ", name: "ชื่อ", category: "หมวดหมู่", plateNumber: "ทะเบียน/หมายเลข" };
-function humanizeDetails(raw: string) { if (!raw) return "ไม่มีรายละเอียดเพิ่มเติม"; try { const parsed = JSON.parse(raw) as Record<string, unknown>; return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage", "password"].includes(key)).map(([key, value]) => `${detailLabels[key] || key}: ${String(value || "-")}`).join(" · ") || "ไม่มีรายละเอียดเพิ่มเติม"; } catch { return raw; } }
+function humanizeDetails(raw: string) { if (!raw) return "ไม่มีรายละเอียดเพิ่มเติม"; try { const parsed = JSON.parse(raw) as Record<string, unknown>; return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage"].includes(key) && !key.toLowerCase().includes("password")).map(([key, value]) => `${detailLabels[key] || key}: ${String(value || "-")}`).join(" · ") || "ไม่มีรายละเอียดเพิ่มเติม"; } catch { return raw; } }
 function resolvedAuditDetails(raw: string, companyNames: Map<string, string>, inventoryById: Map<string, Record<string, string>>, equipmentNames: Map<string, string>) {
   if (!raw) return "ไม่มีรายละเอียดเพิ่มเติม";
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "add-inventory": "เพิ่มรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
-    return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage", "password"].includes(key)).map(([key, rawValue]) => {
+    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "add-inventory": "เพิ่มรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
+    return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage"].includes(key) && !key.toLowerCase().includes("password")).map(([key, rawValue]) => {
       const value = String(rawValue || "-");
       if (key === "action") return `คำสั่ง: ${actionNames[value] || value}`;
       if (["companyId", "destinationCompanyId"].includes(key)) return `${key === "companyId" ? "กองร้อย" : "กองร้อยปลายทาง"}: ${companyNames.get(value) || value}`;
@@ -218,7 +218,7 @@ export async function getAdminData(): Promise<AdminData> {
     const resolvedCompanyIds = [...companyIds].filter(Boolean);
     return { id: field(record, "Log_ID"), user: actor?.name || field(record, "User_ID") || "ระบบ", action: field(record, "Action_Type"), target, targetLabel, timestamp: field(record, "Timestamp"), details: resolvedAuditDetails(field(record, "Details"), companyNames, inventoryById, equipmentNames), companyIds: resolvedCompanyIds, companyNames: resolvedCompanyIds.map((id) => companyNames.get(id) || id) };
   }).sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
-  const companies = companiesTable.rows.map(({ record }) => { const id = field(record, "Company_ID"); const name = field(record, "Company_Name"); const stock = inventories.filter((item) => item.companyId === id); return { id, name, users: users.filter((item) => item.companyId === id).length, total: stock.reduce((sum, item) => sum + item.total, 0), available: stock.reduce((sum, item) => sum + item.available, 0), borrowed: stock.reduce((sum, item) => sum + item.borrowed, 0), broken: stock.reduce((sum, item) => sum + item.broken, 0), transactions: transactions.filter((item) => item.ownerCompanyId === id || item.borrowerCompanyId === id).length }; });
+  const companies = companiesTable.rows.filter(({ record }) => !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active", "Active", "Status").toLowerCase())).map(({ record }) => { const id = field(record, "Company_ID"); const name = field(record, "Company_Name"); const stock = inventories.filter((item) => item.companyId === id); return { id, name, users: users.filter((item) => item.companyId === id).length, total: stock.reduce((sum, item) => sum + item.total, 0), available: stock.reduce((sum, item) => sum + item.available, 0), borrowed: stock.reduce((sum, item) => sum + item.borrowed, 0), broken: stock.reduce((sum, item) => sum + item.broken, 0), transactions: transactions.filter((item) => item.ownerCompanyId === id || item.borrowerCompanyId === id).length }; });
   return { companies, users, equipments, inventories, transactions, maintenance, logs };
 }
 
@@ -226,8 +226,9 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
   if (admin.role !== "Admin") throw new Error("ไม่มีสิทธิ์ผู้ดูแลระบบ");
   return withSheetsMutationLock(async () => {
     const action = String(input.action || "");
-    const [companies, users, equipmentSource, inventories, transactionSource, maintenanceSource, logsSource] = await Promise.all([table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log")]);
+    const [companySource, users, equipmentSource, inventories, transactionSource, maintenanceSource, logsSource] = await Promise.all([table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log")]);
     const updates: Update[] = [];
+    const companies = withColumns(companySource, ["Is_Active"], updates);
     const logs = withColumns(logsSource, ["Details"], updates);
     let maintenance = maintenanceSource;
     const equipments = withColumns(equipmentSource, ["Picture"], updates);
@@ -237,8 +238,20 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
     if (action === "save-company") {
       target ||= `CMP-${randomUUID().slice(0, 8)}`;
       const row = companies.rows.find(({ record }) => field(record, "Company_ID") === target);
-      if (row) updates.push(cell(companies, row.rowNumber, requireColumn(companies, "Company_Name"), String(input.name || "")));
-      else updates.push(append(companies, valuesFor(companies, { Company_ID: target, Company_Name: String(input.name || "") })));
+      if (row) updates.push(cell(companies, row.rowNumber, requireColumn(companies, "Company_Name"), String(input.name || "")), cell(companies, row.rowNumber, requireColumn(companies, "Is_Active"), "TRUE"));
+      else updates.push(append(companies, valuesFor(companies, { Company_ID: target, Company_Name: String(input.name || ""), Is_Active: "TRUE" })));
+    } else if (action === "delete-company") {
+      const row = companies.rows.find(({ record }) => field(record, "Company_ID") === target);
+      if (!row) throw new Error("ไม่พบกองร้อยที่ต้องการลบ");
+      const companyName = field(row.record, "Company_Name");
+      if (String(input.confirmName || "").trim() !== companyName) throw new Error("ชื่อกองร้อยที่กรอกเพื่อยืนยันไม่ถูกต้อง");
+      const adminRow = users.rows.find(({ record }) => field(record, "User_ID") === admin.userId);
+      if (!adminRow || !verifyPassword(String(input.adminPassword || ""), field(adminRow.record, "Password_Hash"))) throw new Error("รหัสผ่านผู้ดูแลระบบไม่ถูกต้อง");
+      if (users.rows.some(({ record }) => field(record, "Company_ID") === target)) throw new Error("ไม่สามารถลบกองร้อยที่ยังมีผู้ใช้งาน กรุณาย้ายหรือลบผู้ใช้ก่อน");
+      if (inventories.rows.some(({ record }) => field(record, "Company_ID") === target && number(record, "Qty_Total") > 0)) throw new Error("ไม่สามารถลบกองร้อยที่ยังมียุทโธปกรณ์ กรุณาเคลื่อนย้ายหรือลบรายการคลังก่อน");
+      if (transactionSource.rows.some(({ record }) => [field(record, "Owner_Company_ID"), field(record, "Borrower_Company_ID")].includes(target) && ["borrowed", "overdue"].includes(field(record, "Status").toLowerCase()) && field(record, "Transaction_Type").toLowerCase() !== "return")) throw new Error("ไม่สามารถลบกองร้อยที่ยังมีรายการยืมค้างอยู่");
+      updates.push(cell(companies, row.rowNumber, requireColumn(companies, "Is_Active"), "FALSE"));
+      auditContext = { companyName };
     } else if (action === "save-user") {
       target ||= `USR-${randomUUID().slice(0, 8)}`;
       const row = users.rows.find(({ record }) => field(record, "User_ID") === target);
@@ -349,7 +362,11 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       } else {
         const destinationTotal = number(destination.record, "Qty_Total");
         const destinationAvailable = number(destination.record, "Qty_Available");
-        if (destinationTotal < quantity) throw new Error("ยอดรวมในคลังผู้ยืมไม่เพียงพอสำหรับการคืน");
+        if (destinationTotal < quantity) {
+          const chained = transactionSource.rows.find(({ record }) => field(record, "Tx_ID") !== target && field(record, "Owner_Company_ID") === borrowerCompanyId && ["borrowed", "overdue"].includes(field(record, "Status").toLowerCase()) && field(record, "Transaction_Type").toLowerCase() !== "return" && (!resolvedEquipmentId || field(record, "Equip_ID") === resolvedEquipmentId) && (!plateNumber || field(record, "Plate_Number") === plateNumber));
+          if (chained) { const nextCompanyId = field(chained.record, "Borrower_Company_ID"); throw new Error(`ยุทโธปกรณ์รายการนี้ถูกเบิกต่อไปยัง ${field(companies.rows.find(({ record }) => field(record, "Company_ID") === nextCompanyId)?.record || {}, "Company_Name") || nextCompanyId} ต้องคืนรายการ ${field(chained.record, "Tx_ID")} ก่อน`); }
+          throw new Error("ยอดรวมในคลังผู้ยืมไม่เพียงพอสำหรับการคืน กรุณาตรวจสอบการเคลื่อนย้ายย้อนหลัง");
+        }
         updates.push(
           cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Total"), number(source.record, "Qty_Total") + quantity),
           cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Available"), sourceAvailable + quantity),
@@ -405,7 +422,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       throw new Error("คำสั่งไม่ถูกต้อง");
     }
 
-    const safeDetails = { ...Object.fromEntries(Object.entries(input).filter(([key]) => key !== "password")), ...auditContext };
+    const safeDetails = { ...Object.fromEntries(Object.entries(input).filter(([key]) => !key.toLowerCase().includes("password"))), ...auditContext };
     updates.push(append(logs, valuesFor(logs, { Log_ID: `LOG-${randomUUID()}`, User_ID: admin.userId, Action_Type: `ADMIN_${action.toUpperCase().replace(/-/g, "_")}`, Target_ID: target, Timestamp: new Date().toISOString(), Details: JSON.stringify(safeDetails) })));
     await write(updates);
     return { success: true, id: target };

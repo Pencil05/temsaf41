@@ -173,6 +173,24 @@ function getInventorySelectionKey(row: SheetRow, requirePlate: boolean) {
   return `${inventoryId}::${plateNumber}::row-${row.rowNumber}`;
 }
 
+function inboundBorrowedByInventory(transactions: SheetTable, inventories: SheetRow[], companyId: string) {
+  const inbound = new Map<string, number>();
+  transactions.rows.forEach(({ record }) => {
+    if (getField(record, "Transaction_Type").toLowerCase() === "return") return;
+    if (!["borrowed", "overdue"].includes(getField(record, "Status").toLowerCase())) return;
+    const ownerCompanyId = getField(record, "Owner_Company_ID", "OwnerCompanyId");
+    const borrowerCompanyId = getField(record, "Borrower_Company_ID", "BorrowerCompanyId");
+    if (borrowerCompanyId !== companyId || ownerCompanyId === borrowerCompanyId) return;
+    const equipmentId = getField(record, "Equip_ID", "Equipment_ID", "EquipId");
+    const plateNumber = getField(record, "Plate_Number", "PlateNumber");
+    const destinationId = getField(record, "Destination_Inventory_ID", "Borrower_Inventory_ID") || getInventoryKey(inventories.find((row) => getField(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && getField(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId && (!plateNumber || getField(row.record, "Plate_Number", "PlateNumber") === plateNumber)) || { rowNumber: 0, record: {} });
+    if (!destinationId || destinationId === "row-0") return;
+    const quantity = getNumber(record, "Outstanding_Qty") || getNumber(record, "Qty", "Quantity");
+    inbound.set(destinationId, (inbound.get(destinationId) || 0) + quantity);
+  });
+  return inbound;
+}
+
 function getHeaderIndex(headers: string[], ...fieldNames: string[]) {
   return headers.findIndex((header) =>
     fieldNames.some((fieldName) => normalizedKey(header) === normalizedKey(fieldName)),
@@ -215,10 +233,11 @@ function createTxId() {
 }
 
 export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageData> {
-  const [companiesTable, equipmentTable, inventoriesTable, account] = await Promise.all([
+  const [companiesTable, equipmentTable, inventoriesTable, transactionsTable, account] = await Promise.all([
     getSheetTable("Companies"),
     getEquipmentTable(),
     getSheetTable("Inventories"),
+    getSheetTable("Transactions"),
     getAccountById(user.userId),
   ]);
   const equipmentById = new Map(
@@ -227,12 +246,13 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
       record,
     ]),
   );
+  const inbound = inboundBorrowedByInventory(transactionsTable, inventoriesTable.rows, user.companyId);
   const companies = companiesTable.rows
     .map(({ record }) => ({
       id: getField(record, "Company_ID", "CompanyId", "ID"),
       name: getField(record, "Company_Name", "CompanyName", "Name"),
     }))
-    .filter((company) => company.id && company.name);
+    .filter((company, index) => company.id && company.name && !["false", "0", "deleted", "inactive"].includes(getField(companiesTable.rows[index]?.record || {}, "Is_Active", "Active", "Status").toLowerCase()));
   const inventory = inventoriesTable.rows
     .filter(({ record }) => getField(record, "Company_ID", "CompanyId") === user.companyId)
     .map((row) => {
@@ -246,7 +266,7 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
-        available: getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable"),
+        available: Math.max(0, getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") - (inbound.get(getInventoryKey(row)) || 0)),
         requirePlate,
         plateNumber: getField(row.record, "Plate_Number", "PlateNumber"),
       };
@@ -269,10 +289,11 @@ export async function getCategoryInventoryData(
   user: SessionUser,
   categoryName: string,
 ): Promise<CategoryInventoryData> {
-  const [companiesTable, equipmentTable, inventoriesTable, account] = await Promise.all([
+  const [companiesTable, equipmentTable, inventoriesTable, transactionsTable, account] = await Promise.all([
     getSheetTable("Companies"),
     getEquipmentTable(),
     getSheetTable("Inventories"),
+    getSheetTable("Transactions"),
     getAccountById(user.userId),
   ]);
   const companies = companiesTable.rows
@@ -280,10 +301,11 @@ export async function getCategoryInventoryData(
       id: getField(record, "Company_ID", "CompanyId", "ID"),
       name: getField(record, "Company_Name", "CompanyName", "Name"),
     }))
-    .filter((company) => company.id && company.name);
+    .filter((company, index) => company.id && company.name && !["false", "0", "deleted", "inactive"].includes(getField(companiesTable.rows[index]?.record || {}, "Is_Active", "Active", "Status").toLowerCase()));
   const companyInventoryRows = inventoriesTable.rows.filter(
     ({ record }) => getField(record, "Company_ID", "CompanyId") === user.companyId,
   );
+  const inbound = inboundBorrowedByInventory(transactionsTable, inventoriesTable.rows, user.companyId);
   const inventory = equipmentTable.rows
     .filter(({ record }) =>
       normalizedKey(getField(record, "Category", "Category_Name", "Equip_Category")) === normalizedKey(categoryName),
@@ -303,7 +325,7 @@ export async function getCategoryInventoryData(
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
-        available: row ? getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") : 0,
+        available: row ? Math.max(0, getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") - (inbound.get(getInventoryKey(row)) || 0)) : 0,
         total: row ? getNumber(row.record, "Qty_Total", "Total_Quantity", "QtyTotal") : 0,
         broken: row ? getNumber(row.record, "Qty_Broken", "Broken_Quantity", "QtyBroken") : 0,
         requirePlate: getBoolean(equipment, "Require_Plate", "RequirePlate"),
@@ -369,6 +391,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
         getField(record, "Company_Name", "CompanyName", "Name"),
       ]),
     );
+    const inbound = inboundBorrowedByInventory(transactionsTable, inventoriesTable.rows, user.companyId);
     const equipmentById = new Map(
       equipmentTable.rows.map(({ record }) => [
         getField(record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId", "ID"),
@@ -387,7 +410,8 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
 
       const equipmentId = getField(inventoryRow.record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId");
       const equipment = equipmentById.get(equipmentId) ?? {};
-      const available = getNumber(inventoryRow.record, "Qty_Available", "Available_Quantity", "QtyAvailable");
+      const physicalAvailable = getNumber(inventoryRow.record, "Qty_Available", "Available_Quantity", "QtyAvailable");
+      const available = Math.max(0, physicalAvailable - (inbound.get(getInventoryKey(inventoryRow)) || 0));
       const borrowed = getNumber(inventoryRow.record, "Qty_Borrowed", "Borrowed_Quantity", "QtyBorrowed");
       const total = getNumber(inventoryRow.record, "Qty_Total", "Total_Quantity", "QtyTotal");
       const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
@@ -414,6 +438,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         plateNumber,
         available,
+        physicalAvailable,
         borrowed,
         total,
         quantity,
@@ -493,7 +518,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       const itemUpdates: Array<{ range: string; values: Array<Array<string | number>> }> = [
         {
           range: `'Inventories'!${columnLetter(availableColumn)}${item.inventoryRow.rowNumber}`,
-          values: [[item.available - item.quantity]],
+          values: [[item.physicalAvailable - item.quantity]],
         },
         {
           range: `'Inventories'!${columnLetter(borrowedColumn)}${item.inventoryRow.rowNumber}`,
