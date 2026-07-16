@@ -3,6 +3,7 @@ import "server-only";
 import { google } from "googleapis";
 import { getAccountById } from "@/lib/account-service";
 import type { SessionUser } from "@/lib/auth-session";
+import { sendLineActivityNotification } from "@/lib/line-oa-notification";
 import { withSheetsMutationLock } from "@/lib/sheets-mutation-lock";
 
 type Row = { record: Record<string, string>; rowNumber: number };
@@ -241,10 +242,12 @@ export async function returnEquipment(
   user: SessionUser,
   input: { transactionId?: string; quantity?: number; items?: Array<{ transactionId: string; quantity: number }>; evidenceImage?: string },
 ) {
-  return withSheetsMutationLock(async () => {
-    const [transactionSource, inventories, audits] = await Promise.all([
-      readTable("Transactions"), readTable("Inventories"), readTable("Audit_Log"),
+  const outcome = await withSheetsMutationLock(async () => {
+    const [transactionSource, inventories, audits, companies, equipments] = await Promise.all([
+      readTable("Transactions"), readTable("Inventories"), readTable("Audit_Log"), readTable("Companies"), readEquipmentTable(),
     ]);
+    const companyNames = new Map(companies.rows.map(({ record }) => [value(record, "Company_ID", "CompanyId", "ID"), value(record, "Company_Name", "CompanyName", "Name")]));
+    const equipmentNames = new Map(equipments.rows.map(({ record }) => [value(record, "Equip_ID", "Equipment_ID", "EquipId", "ID"), value(record, "Equip_Name", "Equipment_Name", "EquipName", "Name")]));
     const evidenceImage = String(input.evidenceImage || "");
     if (evidenceImage && (!evidenceImage.startsWith("data:image/jpeg;base64,") || evidenceImage.length > 45_000)) {
       throw new InventoryActionError("รูปหลักฐานการคืนไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");
@@ -316,19 +319,34 @@ export async function returnEquipment(
       { aliases: ["Details", "Description"], value: `Returned ${selected.length} transaction item(s)` },
     ])));
     await write(updates);
-    return { success: true, returnGroupId };
+    return {
+      result: { success: true, returnGroupId },
+      notification: {
+        kind: "return" as const,
+        actorName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+        ownerCompanyName: companyNames.get(selected[0].ownerCompanyId) || selected[0].ownerCompanyId,
+        borrowerCompanyName: companyNames.get(selected[0].borrowerCompanyId) || selected[0].borrowerCompanyId,
+        referenceId: returnGroupId,
+        occurredAt: now,
+        items: selected.map((item) => ({ name: equipmentNames.get(item.equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์", quantity: item.quantity, plateNumber: item.plateNumber })),
+      },
+    };
   });
+  await sendLineActivityNotification(outcome.notification);
+  return outcome.result;
 }
 
 export async function reportDefect(
   user: SessionUser,
   input: { sourceType: "inventory" | "borrowed"; sourceId: string; quantity: number; note?: string; evidenceImage?: string },
 ) {
-  return withSheetsMutationLock(async () => {
+  const outcome = await withSheetsMutationLock(async () => {
     if (input.sourceType !== "inventory") throw new InventoryActionError("แจ้งซ่อมได้เฉพาะยุทโธปกรณ์ที่เป็นของกองร้อยตนเอง");
-    const [inventories, transactions, maintenanceSource, audits] = await Promise.all([
-      readTable("Inventories"), readTable("Transactions"), readTable("Maintenance"), readTable("Audit_Log"),
+    const [inventories, transactions, maintenanceSource, audits, companies, equipments] = await Promise.all([
+      readTable("Inventories"), readTable("Transactions"), readTable("Maintenance"), readTable("Audit_Log"), readTable("Companies"), readEquipmentTable(),
     ]);
+    const companyNames = new Map(companies.rows.map(({ record }) => [value(record, "Company_ID", "CompanyId", "ID"), value(record, "Company_Name", "CompanyName", "Name")]));
+    const equipmentNames = new Map(equipments.rows.map(({ record }) => [value(record, "Equip_ID", "Equipment_ID", "EquipId", "ID"), value(record, "Equip_Name", "Equipment_Name", "EquipName", "Name")]));
     const evidenceImage = String(input.evidenceImage || "");
     if (!evidenceImage.startsWith("data:image/jpeg;base64,") || evidenceImage.length > 45_000) {
       throw new InventoryActionError("กรุณาแนบรูปหลักฐานการแจ้งเสียที่ถูกต้อง");
@@ -413,6 +431,20 @@ export async function reportDefect(
       { aliases: ["Details", "Description"], value: `Reported ${quantity} broken item(s)` },
     ])));
     await write(updates);
-    return { success: true };
+    const companyId = value(inventory.record, "Company_ID", "CompanyId");
+    return {
+      result: { success: true },
+      notification: {
+        kind: "defect" as const,
+        actorName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+        ownerCompanyName: companyNames.get(companyId) || companyId,
+        referenceId: maintenanceId,
+        occurredAt: now,
+        note: input.note?.trim() || "",
+        items: [{ name: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์", quantity, plateNumber: value(inventory.record, "Plate_Number", "PlateNumber") }],
+      },
+    };
   });
+  await sendLineActivityNotification(outcome.notification);
+  return outcome.result;
 }

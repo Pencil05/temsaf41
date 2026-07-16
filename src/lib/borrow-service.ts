@@ -3,6 +3,7 @@ import "server-only";
 import { google } from "googleapis";
 import { getAccountById } from "@/lib/account-service";
 import type { SessionUser } from "@/lib/auth-session";
+import { sendLineActivityNotification } from "@/lib/line-oa-notification";
 import { withSheetsMutationLock } from "@/lib/sheets-mutation-lock";
 
 type SheetRecord = Record<string, string>;
@@ -348,7 +349,7 @@ export async function getCategoryInventoryData(
 }
 
 export async function submitBorrowRequest(user: SessionUser, input: BorrowRequestInput): Promise<BorrowReceipt> {
-  return withSheetsMutationLock(async () => {
+  const receipt = await withSheetsMutationLock(async () => {
     if (!input.borrowerCompanyId || !input.items.length) {
       throw new BorrowValidationError("กรุณากรอกข้อมูลการยืมให้ครบถ้วน");
     }
@@ -602,4 +603,16 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       })),
     };
   });
+  await sendLineActivityNotification({
+    kind: "borrow",
+    actorName: receipt.borrowerName,
+    ownerCompanyName: receipt.ownerCompanyName,
+    borrowerCompanyName: receipt.borrowerCompanyName,
+    referenceId: receipt.txId,
+    occurredAt: receipt.date,
+    dueDate: receipt.dueDate,
+    note: receipt.note,
+    items: receipt.items,
+  });
+  return receipt;
 }

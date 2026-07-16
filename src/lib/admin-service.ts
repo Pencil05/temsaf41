@@ -5,6 +5,7 @@ import { google } from "googleapis";
 import type { SessionUser } from "@/lib/auth-session";
 import { hashPassword, verifyPassword } from "@/lib/password-utils";
 import { getEquipmentImage } from "@/lib/equipment-images";
+import { sendLineActivityNotification, type LineActivityNotification } from "@/lib/line-oa-notification";
 import { withSheetsMutationLock } from "@/lib/sheets-mutation-lock";
 
 type RecordRow = { rowNumber: number; record: Record<string, string> };
@@ -255,6 +256,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
     let target = String(input.id || "");
     let auditContext: Record<string, string> = {};
     let rangesToClear: string[] = [];
+    let lineNotification: LineActivityNotification | null = null;
 
     if (action === "save-company") {
       target ||= `CMP-${randomUUID().slice(0, 8)}`;
@@ -421,6 +423,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
         append(transactions, valuesFor(transactions, { Tx_ID: `${returnGroupId}-1`, Group_Tx_ID: returnGroupId, Return_Group_ID: returnGroupId, Transaction_Type: "RETURN", Parent_Tx_ID: target, Owner_Company_ID: ownerCompanyId, Borrower_Company_ID: borrowerCompanyId, User_ID: admin.userId, Inv_ID: sourceInventoryId, Destination_Inventory_ID: destinationInventoryId, Equip_ID: resolvedEquipmentId, Plate_Number: plateNumber, Qty: quantity, Original_Qty: quantity, Outstanding_Qty: 0, Borrow_Date: now, Return_Date: now, Return_User_ID: admin.userId, Status: "Returned", Note: `ผู้ดูแลระบบคืนยุทโธปกรณ์จากรายการ ${target}` })),
       );
       auditContext = { equipmentName: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === resolvedEquipmentId)?.record || {}, "Equip_Name"), companyName: `${field(companies.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId)?.record || {}, "Company_Name")} → ${field(companies.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId)?.record || {}, "Company_Name")}`, quantity: String(quantity) };
+      lineNotification = { kind: "return", actorName: [admin.rank, admin.firstName, admin.lastName].filter(Boolean).join(" ") || admin.email, ownerCompanyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId)?.record || {}, "Company_Name") || ownerCompanyId, borrowerCompanyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId)?.record || {}, "Company_Name") || borrowerCompanyId, referenceId: returnGroupId, occurredAt: now, items: [{ name: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === resolvedEquipmentId)?.record || {}, "Equip_Name") || "ไม่ระบุชื่อยุทโธปกรณ์", quantity, plateNumber }] };
     } else if (action === "delete-transaction-history") {
       const requestedIds = new Set((Array.isArray(input.ids) ? input.ids : [input.id]).map(String).filter(Boolean));
       const isActiveBorrow = ({ record }: RecordRow) => field(record, "Transaction_Type").toLowerCase() !== "return"
@@ -451,6 +454,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       );
       const equipmentId = field(inventory.record, "Equip_ID");
       auditContext = { equipmentName: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === equipmentId)?.record || {}, "Equip_Name"), companyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === field(inventory.record, "Company_ID"))?.record || {}, "Company_Name"), plateNumber: field(inventory.record, "Plate_Number") };
+      lineNotification = { kind: "defect", actorName: [admin.rank, admin.firstName, admin.lastName].filter(Boolean).join(" ") || admin.email, ownerCompanyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === field(inventory.record, "Company_ID"))?.record || {}, "Company_Name") || field(inventory.record, "Company_ID"), referenceId: target, occurredAt: new Date().toISOString(), note: String(input.note || "แจ้งผ่าน AI ผู้ช่วยผู้ดูแลระบบ"), items: [{ name: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === equipmentId)?.record || {}, "Equip_Name") || "ไม่ระบุชื่อยุทโธปกรณ์", quantity, plateNumber: field(inventory.record, "Plate_Number") }] };
     } else if (action === "maintenance-status") {
       const row = maintenance.rows.find(({ record }) => field(record, "Maint_ID") === target);
       if (!row) throw new Error("ไม่พบรายการซ่อม");
@@ -492,6 +496,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
     updates.push(append(logs, valuesFor(logs, { Log_ID: `LOG-${randomUUID()}`, User_ID: admin.userId, Action_Type: `ADMIN_${action.toUpperCase().replace(/-/g, "_")}`, Target_ID: target, Timestamp: new Date().toISOString(), Details: JSON.stringify(safeDetails) })));
     await clearRanges(rangesToClear);
     await write(updates);
+    if (lineNotification) await sendLineActivityNotification(lineNotification);
     return { success: true, id: target };
   });
 }

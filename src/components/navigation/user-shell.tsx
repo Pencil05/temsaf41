@@ -7,6 +7,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { UserAiAssistant } from "@/components/user/user-ai-assistant";
 import type { AccountProfile } from "@/lib/account-service";
 import type { GlobalSearchItem } from "@/lib/google-sheets";
 
@@ -280,6 +281,7 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
         </header>
 
         {children}
+        <UserAiAssistant />
       </div>
     </div>
   );

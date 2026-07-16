@@ -55,6 +55,19 @@ Production refuses to issue a fake OTP when `SMS_WEBHOOK_URL` is missing. Develo
 
 Receipt sharing uses the mobile operating system's native share sheet. On a supported mobile browser, choose LINE from the normal Share button and LINE will present its own recipient screen. File sharing requires HTTPS (or localhost) and a browser that supports the Web Share API with files.
 
+### LINE Official Account notifications
+
+TEMS sends a LINE OA text notification after a borrow, return, or defect transaction has been written successfully. LINE delivery failure does not roll back the Google Sheets transaction.
+
+Configure these server-only variables locally and in Vercel:
+
+- `LINE_CHANNEL_ACCESS_TOKEN` — long-lived Messaging API channel access token from LINE Developers Console.
+- `LINE_OA_DELIVERY_MODE=broadcast` — sends each notification to every user who has added the OA and is eligible to receive messages.
+- `LINE_OA_DELIVERY_MODE=push` — sends to one user, group, or room instead.
+- `LINE_OA_TARGET_ID` — required only in `push` mode; use the LINE user ID, group ID, or room ID received from a Messaging API webhook.
+
+The notification contains the operator, source and destination companies, equipment list, quantities, timestamps, due date when applicable, and the TEMS reference number. Sending messages uses the LINE OA monthly Messaging API quota.
+
 Run the app with `npm run dev` on the mapped `X:` drive.
 
 ## Getting Started
@@ -97,6 +110,8 @@ The app is already wired to use Google Sheets as its data source, so deployment 
    - `SHEET_ID` (set to `1O7UBSJiPKffZVG6isyTrDD1qUpPtvAQ5ZcUiogIzuf4`)
    - `SESSION_SECRET`
    - `ALLOW_MOCK_AUTH=false`
+   - `LINE_CHANNEL_ACCESS_TOKEN`
+   - `LINE_OA_DELIVERY_MODE=broadcast` (or `push` with `LINE_OA_TARGET_ID`)
    - optional SMS variables if you want OTP delivery to work in production.
 3. Deploy the project. The app will read the spreadsheet from the same shared Google Sheet automatically.
 
