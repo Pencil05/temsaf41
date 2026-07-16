@@ -158,6 +158,23 @@ async function write(updates: Update[]) {
   await (await sheets()).spreadsheets.values.batchUpdate({ spreadsheetId: config().spreadsheetId, requestBody: { valueInputOption: "RAW", data: updates } });
 }
 
+async function clearRanges(ranges: string[]) {
+  if (!ranges.length) return;
+  await (await sheets()).spreadsheets.values.batchClear({ spreadsheetId: config().spreadsheetId, requestBody: { ranges } });
+}
+
+function rangesForRows(sheet: Table, rowNumbers: number[]) {
+  const sorted = [...new Set(rowNumbers)].sort((first, second) => first - second);
+  const groups: Array<{ start: number; end: number }> = [];
+  for (const rowNumber of sorted) {
+    const current = groups.at(-1);
+    if (current && rowNumber === current.end + 1) current.end = rowNumber;
+    else groups.push({ start: rowNumber, end: rowNumber });
+  }
+  const lastColumn = letter(sheet.headers.length - 1);
+  return groups.map(({ start, end }) => `'${sheet.name}'!A${start}:${lastColumn}${end}`);
+}
+
 export async function getAdminData(): Promise<AdminData> {
   const [companiesTable, usersTable, equipmentSource, inventoriesTable, transactionsTable, maintenanceTable, logsTable] = await Promise.all([
     table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log"),
@@ -237,6 +254,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
     const equipments = withColumns(equipmentSource, ["Picture", "Is_Active"], updates);
     let target = String(input.id || "");
     let auditContext: Record<string, string> = {};
+    let rangesToClear: string[] = [];
 
     if (action === "save-company") {
       target ||= `CMP-${randomUUID().slice(0, 8)}`;
@@ -403,6 +421,19 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
         append(transactions, valuesFor(transactions, { Tx_ID: `${returnGroupId}-1`, Group_Tx_ID: returnGroupId, Return_Group_ID: returnGroupId, Transaction_Type: "RETURN", Parent_Tx_ID: target, Owner_Company_ID: ownerCompanyId, Borrower_Company_ID: borrowerCompanyId, User_ID: admin.userId, Inv_ID: sourceInventoryId, Destination_Inventory_ID: destinationInventoryId, Equip_ID: resolvedEquipmentId, Plate_Number: plateNumber, Qty: quantity, Original_Qty: quantity, Outstanding_Qty: 0, Borrow_Date: now, Return_Date: now, Return_User_ID: admin.userId, Status: "Returned", Note: `ผู้ดูแลระบบคืนยุทโธปกรณ์จากรายการ ${target}` })),
       );
       auditContext = { equipmentName: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === resolvedEquipmentId)?.record || {}, "Equip_Name"), companyName: `${field(companies.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId)?.record || {}, "Company_Name")} → ${field(companies.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId)?.record || {}, "Company_Name")}`, quantity: String(quantity) };
+    } else if (action === "delete-transaction-history") {
+      const requestedIds = new Set((Array.isArray(input.ids) ? input.ids : [input.id]).map(String).filter(Boolean));
+      const isActiveBorrow = ({ record }: RecordRow) => field(record, "Transaction_Type").toLowerCase() !== "return"
+        && ["borrowed", "overdue"].includes(field(record, "Status").toLowerCase())
+        && (number(record, "Outstanding_Qty") || number(record, "Qty")) > 0;
+      const selectedRows = input.all === true
+        ? transactionSource.rows.filter((row) => !isActiveBorrow(row))
+        : transactionSource.rows.filter(({ record }) => requestedIds.has(field(record, "Tx_ID")));
+      if (!selectedRows.length) throw new Error("ไม่พบประวัติเบิกคืนที่สามารถล้างได้");
+      if (selectedRows.some(isActiveBorrow)) throw new Error("ไม่สามารถลบรายการที่ยังยืมค้างหรือเกินกำหนดได้ กรุณาคืนยุทโธปกรณ์ให้เสร็จก่อน");
+      rangesToClear = rangesForRows(transactionSource, selectedRows.map((row) => row.rowNumber));
+      target = selectedRows.length === 1 ? field(selectedRows[0].record, "Tx_ID") : `TRANSACTION_HISTORY:${selectedRows.length}`;
+      auditContext = { quantity: String(selectedRows.length), scope: input.all === true ? "ประวัติที่ปิดงานแล้วทั้งหมด" : "รายการที่เลือก" };
     } else if (action === "report-defect") {
       const inventory = inventories.rows.find(({ record }) => field(record, "Inv_ID") === String(input.inventoryId || input.id || ""));
       if (!inventory) throw new Error("ไม่พบยุทโธปกรณ์ในคลังที่ต้องการแจ้งเสีย");
@@ -459,6 +490,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
 
     const safeDetails = { ...Object.fromEntries(Object.entries(input).filter(([key]) => !key.toLowerCase().includes("password"))), ...auditContext };
     updates.push(append(logs, valuesFor(logs, { Log_ID: `LOG-${randomUUID()}`, User_ID: admin.userId, Action_Type: `ADMIN_${action.toUpperCase().replace(/-/g, "_")}`, Target_ID: target, Timestamp: new Date().toISOString(), Details: JSON.stringify(safeDetails) })));
+    await clearRanges(rangesToClear);
     await write(updates);
     return { success: true, id: target };
   });

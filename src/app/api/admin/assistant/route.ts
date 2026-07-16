@@ -7,7 +7,7 @@ const MODEL = "gemini-3.1-flash-lite";
 const allowedActions = new Set([
   "save-company", "delete-company", "save-user", "delete-user", "save-equipment", "delete-equipment", "delete-equipment-category",
   "add-inventory", "save-inventory", "transfer-inventory", "delete-inventory",
-  "return-transaction", "report-defect", "maintenance-status", "dispose-maintenance",
+  "return-transaction", "delete-transaction-history", "report-defect", "maintenance-status", "dispose-maintenance",
 ]);
 
 type GeminiResponse = {
@@ -80,10 +80,12 @@ export async function POST(request: Request) {
 - transfer-inventory: {action,sourceInventoryId,destinationCompanyId,quantity}
 - delete-inventory: {action,id}
 - return-transaction: {action,id}
+- delete-transaction-history: {action,all:true} สำหรับล้างประวัติเบิกคืนที่ปิดงานแล้วทั้งหมด หรือ {action,ids:["Tx_ID"]} สำหรับรายการที่ระบุ
 - report-defect: {action,inventoryId,quantity,note} (ต้องแจ้งว่าผู้ดูแลต้องแนบรูปก่อนยืนยัน)
 - maintenance-status: {action,id,status} โดย status ใช้ Reported, Inspecting, Repairing, Completed
 - dispose-maintenance: {action,id}
 การลบ จำหน่าย คืน เคลื่อนย้าย และแก้ยอดเป็นคำสั่งสำคัญ ต้องเขียน summary ให้ชัดเจน ห้ามเดารหัส ถ้าชื่อซ้ำหรือไม่แน่ใจให้ clarification
+ถ้าผู้ใช้พูดว่า “ล้างประวัติเบิกคืนทั้งหมด”, “ล้างประวัติออกให้หมด” หรือความหมายเดียวกัน ให้เสนอ delete-transaction-history โดย all=true
 ตอบ JSON เท่านั้น: {"type":"answer|clarification|proposal","message":"ข้อความ","summary":"สรุปผลกระทบ","payload":{}}
 CONTEXT=${JSON.stringify(context)}`;
 
