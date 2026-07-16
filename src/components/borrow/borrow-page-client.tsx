@@ -75,6 +75,10 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   }
 
   function toggleItem(item: BorrowInventoryItem) {
+    if (!selfUse && borrowerCompanyId && item.inboundBorrowed > 0) {
+      showToast("error", "รายการนี้เป็นยุทโธปกรณ์ที่รับยืมมา จึงห้ามส่งต่อให้กองร้อยอื่น");
+      return;
+    }
     setSelected((current) => {
       const next = { ...current };
       if (next[item.selectionId] !== undefined) {
@@ -136,6 +140,10 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
 
     if (!selectedItems.length) {
       showToast("error", "กรุณาเลือกยุทโธปกรณ์อย่างน้อย 1 รายการ");
+      return;
+    }
+    if (!selfUse && selectedItems.some((item) => item.inboundBorrowed > 0)) {
+      showToast("error", "พบยุทโธปกรณ์ที่รับยืมมาในรายการ ระบบห้ามนำไปให้กองร้อยอื่นยืมต่อ");
       return;
     }
     const invalidItem = selectedItems.find((item) => !item.requirePlate && (Number(selected[item.selectionId]) < 1 || Number(selected[item.selectionId]) > item.available));
@@ -314,11 +322,14 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
               {filteredInventory.length ? (
                 filteredInventory.map((item) => {
                   const isSelected = selected[item.selectionId] !== undefined;
+                  const relendingBlocked = Boolean(borrowerCompanyId && !selfUse && item.inboundBorrowed > 0);
                   return (
                     <article
                       key={item.selectionId}
                       className={`equipment-selection-item overflow-hidden rounded-2xl border bg-white/75 shadow-[0_8px_22px_rgba(15,23,42,0.06)] transition ${
-                        isSelected
+                        relendingBlocked
+                          ? "border-red-200 bg-red-50/70 opacity-70"
+                          : isSelected
                           ? "is-selected border-blue-400 bg-blue-50/80 shadow-md shadow-blue-100"
                           : "border-slate-200 hover:border-blue-200"
                       }`}
@@ -326,6 +337,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                       <button
                         type="button"
                         onClick={() => toggleItem(item)}
+                        disabled={relendingBlocked}
                         className="flex w-full items-center gap-3 p-4 text-left"
                         aria-pressed={isSelected}
                       >
@@ -338,6 +350,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                             {item.category} · พร้อมเบิก {item.available.toLocaleString("th-TH")}
                           </span>
                           {item.plateNumber && <span className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700"><Hash className="size-3.5 shrink-0" /><span className="truncate">ทะเบียน / Serial: {item.plateNumber}</span></span>}
+                          {item.inboundBorrowed > 0 && <span className="mt-1.5 block text-[11px] font-bold text-red-600">รับยืมมาจากกองร้อยอื่น · ห้ามส่งต่อ</span>}
                         </span>
                         <span
                           className={`grid size-6 shrink-0 place-items-center rounded-full border-2 ${

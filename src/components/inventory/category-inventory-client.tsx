@@ -116,6 +116,10 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
       showToast("error", "กรุณาระบุสถานที่และวัตถุประสงค์ของการเบิกใช้งานภายในหน่วย");
       return;
     }
+    if (!selfUse && activeItem.inboundBorrowed > 0) {
+      showToast("error", "ยุทโธปกรณ์รายการนี้รับยืมมาจากกองร้อยอื่น จึงห้ามส่งต่อโดยเด็ดขาด");
+      return;
+    }
 
     const destinationName = data.companies.find((company) => company.id === companyId)?.name || companyId;
     setReviewReceipt({
@@ -263,6 +267,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
                     <CountBox label="Broken" value={item.broken} tone="red" />
                   </div>
                 )}
+                {item.inboundBorrowed > 0 && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">รับยืมมาจากกองร้อยอื่น · ห้ามส่งต่อ</p>}
               </div>
             </button>
           )) : (
@@ -291,11 +296,12 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
               <label className="block"><span className="mb-2 block text-sm font-semibold">จำนวน</span><input type="number" min={1} max={Math.max(1, activeItem.available)} value={activeItem.requirePlate ? 1 : quantity} disabled={activeItem.requirePlate || activeItem.available < 1} onChange={(event) => setQuantity(event.target.value === "" ? "" : Math.min(activeItem.available, Math.max(1, Math.floor(Number(event.target.value) || 1))))} onBlur={() => { if (quantity === "") setQuantity(1); }} className="h-12 w-full rounded-xl border border-slate-200 px-3 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100" />{activeItem.available < 1 && <span className="mt-2 block text-xs font-medium text-red-600">รายการนี้แสดงจากบัญชีแม่ แต่คลังของหน่วยยังไม่มียอดพร้อมเบิก</span>}</label>
               <label className="block"><span className="mb-2 block text-sm font-semibold">เบิกไปที่</span><CompactSelect value={companyId} onChange={setCompanyId} required searchable placeholder="เลือกกองร้อยปลายทาง" options={data.companies.map((company) => ({ value: company.id, label: company.name, description: company.id === data.ownerCompanyId ? "เบิกใช้งานภายในหน่วย" : undefined }))} /></label>
               {selfUse && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm leading-6 text-blue-800"><p className="font-bold">เบิกใช้งานภายในหน่วย</p><p>จำนวนจะถูกกันออกจากยอดพร้อมใช้ และคืนกลับคลังเดิมเมื่อใช้งานเสร็จ</p></div>}
+              {!selfUse && companyId && activeItem.inboundBorrowed > 0 && <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-semibold leading-6 text-red-700">รายการนี้เป็นทรัพย์ที่กองร้อยรับยืมมา ระบบไม่อนุญาตให้นำไปให้กองร้อยอื่นยืมต่อ</div>}
               <label className="block"><span className="mb-2 flex items-center gap-2 text-sm font-semibold"><CalendarClock className="size-4 text-blue-600" />วันและเวลาส่งคืน</span><input type="datetime-local" value={dueDate} onChange={(event) => setDueDate(event.target.value)} required className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" /></label>
               <label className="block"><span className="mb-2 block text-sm font-semibold">หมายเหตุ</span><input value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} required={selfUse} placeholder={selfUse ? "ระบุสถานที่ใช้งานและวัตถุประสงค์" : "ระบุหมายเหตุ (ถ้ามี)"} className="h-12 w-full rounded-xl border border-slate-200 px-3 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" /></label>
               <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-blue-300 bg-blue-50 p-3"><span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-white text-blue-600">{evidenceImage ? <Image src={evidenceImage} alt="รูปหลักฐาน" width={48} height={48} unoptimized className="size-12 object-cover" /> : <UploadCloud className="size-5" />}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{evidenceName || "แนบรูปหลักฐาน"}</span><span className="block text-xs text-slate-500">รูปไม่เกิน 5 MB</span></span><input type="file" accept="image/*" onChange={handleEvidence} className="sr-only" /></label>
             </div>
-            <div className="mt-6 grid grid-cols-2 gap-3"><button type="button" onClick={() => setActiveItem(null)} className="h-12 rounded-full bg-slate-100 font-bold text-slate-600">ยกเลิก</button><button type="submit" disabled={isSubmitting || activeItem.available < 1} className="h-12 rounded-full bg-emerald-600 font-bold text-white shadow-lg shadow-emerald-100 disabled:opacity-60">{isSubmitting ? "กำลังบันทึก..." : "ยืนยัน"}</button></div>
+            <div className="mt-6 grid grid-cols-2 gap-3"><button type="button" onClick={() => setActiveItem(null)} className="h-12 rounded-full bg-slate-100 font-bold text-slate-600">ยกเลิก</button><button type="submit" disabled={isSubmitting || activeItem.available < 1 || (!selfUse && Boolean(companyId) && activeItem.inboundBorrowed > 0)} className="h-12 rounded-full bg-emerald-600 font-bold text-white shadow-lg shadow-emerald-100 disabled:opacity-60">{isSubmitting ? "กำลังบันทึก..." : "ยืนยัน"}</button></div>
           </form>
         </div>
       )}

@@ -70,6 +70,7 @@ export async function POST(request: Request) {
 - return: {action:"return",items:[{transactionId,quantity}]}
 - report-defect: {action:"report-defect",sourceType:"inventory",sourceId,quantity,note} และแจ้งว่าต้องแนบรูปก่อนยืนยัน
 กฎเบิก: ใช้ได้เฉพาะ availableInventory, quantity ไม่เกิน available, รถ/รายการมีทะเบียนเลือกตาม plateNumber, วันคืนต้องอยู่ในอนาคต
+ห้ามนำรายการที่ inboundBorrowed มากกว่า 0 ไปเบิกให้กองร้อยอื่นโดยเด็ดขาด เพราะเป็นยุทโธปกรณ์ที่รับยืมมาและส่งต่อไม่ได้
 กฎคืน: ใช้ได้เฉพาะ returnableTransactions, quantity ไม่เกิน quantity ของรายการ และรายการที่คืนพร้อมกันต้องมี ownerCompanyId เดียวกัน
 กฎแจ้งเสีย: ใช้ได้เฉพาะ defectableInventory ที่ sourceType=inventory, quantity ไม่เกิน maximum และต้องมีรูปหลักฐานจากผู้ใช้
 ถ้าเป็นคำถามข้อมูลให้ type=answer ถ้าต้องถามเพิ่มให้ type=clarification ถ้าพร้อมดำเนินการให้ type=proposal
@@ -101,6 +102,7 @@ CONTEXT=${JSON.stringify(context)}`;
         const inventory = borrowData.inventory.find((candidate) => candidate.inventoryId === item.inventoryId && (!candidate.requirePlate || candidate.plateNumber === String(item.plateNumber || "")));
         const quantity = Math.floor(Number(item.quantity));
         if (!inventory || quantity < 1 || quantity > inventory.available || (inventory.requirePlate && quantity !== 1)) throw new Error("รายการหรือจำนวนที่ AI เตรียมไว้ไม่ตรงกับยอดพร้อมเบิกล่าสุด");
+        if (payload.borrowerCompanyId !== user.companyId && inventory.inboundBorrowed > 0) throw new Error("AI ไม่สามารถนำยุทโธปกรณ์ที่รับยืมมาไปให้กองร้อยอื่นยืมต่อได้");
       }
     }
     if (action === "return") {

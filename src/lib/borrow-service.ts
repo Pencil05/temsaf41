@@ -26,6 +26,7 @@ export type BorrowInventoryItem = {
   name: string;
   category: string;
   available: number;
+  inboundBorrowed: number;
   requirePlate: boolean;
   plateNumber: string;
 };
@@ -188,8 +189,11 @@ function inboundBorrowedByInventory(transactions: SheetTable, inventories: Sheet
     if (borrowerCompanyId !== companyId || ownerCompanyId === borrowerCompanyId) return;
     const equipmentId = getField(record, "Equip_ID", "Equipment_ID", "EquipId");
     const plateNumber = getPlateOrSerial(record);
-    const destinationId = getField(record, "Destination_Inventory_ID", "Borrower_Inventory_ID") || getInventoryKey(inventories.find((row) => getField(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && getField(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId && (!plateNumber || getPlateOrSerial(row.record) === plateNumber)) || { rowNumber: 0, record: {} });
-    if (!destinationId || destinationId === "row-0") return;
+    const recordedDestinationId = getField(record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
+    const destination = inventories.find((row) => recordedDestinationId && getInventoryKey(row) === recordedDestinationId && getField(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && (!equipmentId || getField(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId) && (!plateNumber || getPlateOrSerial(row.record) === plateNumber))
+      || inventories.find((row) => getField(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && getField(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId && (!plateNumber || getPlateOrSerial(row.record) === plateNumber));
+    if (!destination) return;
+    const destinationId = getInventoryKey(destination);
     const quantity = getNumber(record, "Outstanding_Qty") || getNumber(record, "Qty", "Quantity");
     inbound.set(destinationId, (inbound.get(destinationId) || 0) + quantity);
   });
@@ -265,13 +269,15 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
       const equipment = equipmentById.get(equipmentId) ?? {};
       const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
 
+      const inboundBorrowed = inbound.get(getInventoryKey(row)) || 0;
       return {
         selectionId: getInventorySelectionKey(row, requirePlate),
         inventoryId: getInventoryKey(row),
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
-        available: Math.max(0, getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") - (inbound.get(getInventoryKey(row)) || 0)),
+        available: Math.max(0, getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") - inboundBorrowed),
+        inboundBorrowed,
         requirePlate,
         plateNumber: getPlateOrSerial(row.record),
       };
@@ -332,6 +338,7 @@ export async function getCategoryInventoryData(
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
         available: row ? Math.max(0, getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") - (inbound.get(getInventoryKey(row)) || 0)) : 0,
+        inboundBorrowed: row ? inbound.get(getInventoryKey(row)) || 0 : 0,
         total: row ? getNumber(row.record, "Qty_Total", "Total_Quantity", "QtyTotal") : 0,
         broken: row ? getNumber(row.record, "Qty_Broken", "Broken_Quantity", "QtyBroken") : 0,
         requirePlate: getBoolean(equipment, "Require_Plate", "RequirePlate"),
@@ -424,6 +431,9 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
       const quantity = requirePlate ? 1 : Math.floor(Number(requestItem.quantity));
       const plateNumber = getPlateOrSerial(inventoryRow.record);
+      if (!selfUse && inboundQuantity > 0) {
+        throw new BorrowValidationError(`${getField(equipment, "Equip_Name", "Equipment_Name", "Name") || "รายการที่เลือก"}${plateNumber ? ` (${plateNumber})` : ""} เป็นยุทโธปกรณ์ที่กองร้อยรับยืมมา จึงห้ามเบิกส่งต่อให้กองร้อยอื่นโดยเด็ดขาด`);
+      }
       if (requirePlate && (!requestItem.plateNumber || requestItem.plateNumber !== plateNumber)) {
         throw new BorrowValidationError("กรุณาเลือกยานพาหนะตามหมายเลขทะเบียนที่แสดง");
       }
@@ -433,9 +443,6 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
         (!plateNumber || getPlateOrSerial(record) === plateNumber),
       );
 
-      if (Number.isInteger(quantity) && quantity > available && inboundQuantity > 0) {
-        throw new BorrowValidationError(`${getField(equipment, "Equip_Name", "Equipment_Name", "Name") || "รายการที่เลือก"} มีจำนวนที่รับยืมมาปะปนอยู่และห้ามนำไปให้กองร้อยอื่นยืมต่อ เบิกได้จากยอดของกองร้อยตนเองสูงสุด ${available} รายการ`);
-      }
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > available) {
         throw new BorrowValidationError(
           `${getField(equipment, "Equip_Name", "Equipment_Name", "Name") || "รายการที่เลือก"} มีจำนวนคงเหลือไม่เพียงพอ`,
