@@ -337,6 +337,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                           <span className="mt-1 block text-xs text-slate-500">
                             {item.category} · พร้อมเบิก {item.available.toLocaleString("th-TH")}
                           </span>
+                          {item.plateNumber && <span className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700"><Hash className="size-3.5 shrink-0" /><span className="truncate">ทะเบียน / Serial: {item.plateNumber}</span></span>}
                         </span>
                         <span
                           className={`grid size-6 shrink-0 place-items-center rounded-full border-2 ${
@@ -352,7 +353,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                           {item.requirePlate ? (
                             <div className="flex items-center justify-between gap-4 text-sm">
                               <span className="flex items-center gap-2 text-slate-500">
-                                <Hash className="size-4" /> หมายเลขทะเบียน
+                                <Hash className="size-4" /> ทะเบียน / Serial Number
                               </span>
                               <span className="font-bold text-slate-800">{item.plateNumber || "ไม่ระบุ"}</span>
                             </div>
