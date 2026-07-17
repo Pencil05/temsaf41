@@ -22,7 +22,7 @@ export type DashboardActionData = {
   contactPhone: string;
   contactEmail: string;
   companies: Array<{ id: string; name: string }>;
-  returns: Array<{ transactionId: string; name: string; quantity: number; ownerCompanyId: string; ownerCompanyName: string; selfUse: boolean }>;
+  returns: Array<{ transactionId: string; name: string; quantity: number; ownerCompanyId: string; ownerCompanyName: string; selfUse: boolean; plateNumber: string; picture: string }>;
   defects: Array<{ sourceType: "inventory" | "borrowed"; sourceId: string; name: string; maximum: number; label: string; plateNumber: string; picture: string }>;
 };
 
@@ -204,6 +204,7 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
       value(inferredInventory?.record ?? {}, "Equip_ID", "Equipment_ID", "EquipId") ||
       "";
     const ownerCompanyId = value(record, "Owner_Company_ID", "OwnerCompanyId");
+    const plateNumber = value(record, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial") || value(inferredInventory?.record ?? {}, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial");
     return {
       transactionId: value(record, "Tx_ID", "Transaction_ID", "TransactionId", "ID"),
       name: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อ",
@@ -211,6 +212,8 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
       ownerCompanyId,
       ownerCompanyName: companyNames.get(ownerCompanyId) || ownerCompanyId,
       selfUse: ownerCompanyId === value(record, "Borrower_Company_ID", "BorrowerCompanyId"),
+      plateNumber,
+      picture: equipmentPictures.get(equipmentId) || "",
     };
   });
   const defects: DashboardActionData["defects"] = inventories.rows.filter(({ record }) =>
@@ -266,11 +269,18 @@ export async function returnEquipment(
       if (borrowerCompanyId !== user.companyId) throw new InventoryActionError("หน่วยของคุณไม่มีสิทธิ์คืนรายการนี้");
       const sourceInventoryId = value(transaction.record, "Inv_ID", "Inventory_ID", "InventoryId");
       const destinationInventoryId = value(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
-      const plateNumber = value(transaction.record, "Plate_Number", "PlateNumber");
+      const transactionPlateNumber = value(transaction.record, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial");
       const directEquipmentId = value(transaction.record, "Equip_ID", "Equipment_ID", "EquipId");
-      const sourceInventory = inventories.rows.find((row) => sourceInventoryId && inventoryKey(row) === sourceInventoryId && (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber)) || inventories.rows.find((row) => directEquipmentId && value(row.record, "Company_ID", "CompanyId") === ownerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === directEquipmentId && (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber)) || inferLegacySourceInventory(transaction, inventories.rows);
+      const sourceInventory = inventories.rows.find((row) => sourceInventoryId && inventoryKey(row) === sourceInventoryId && (!transactionPlateNumber || value(row.record, "Plate_Number", "PlateNumber") === transactionPlateNumber)) || inventories.rows.find((row) => directEquipmentId && value(row.record, "Company_ID", "CompanyId") === ownerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === directEquipmentId && (!transactionPlateNumber || value(row.record, "Plate_Number", "PlateNumber") === transactionPlateNumber)) || inferLegacySourceInventory(transaction, inventories.rows);
       const equipmentId = directEquipmentId || value(sourceInventory?.record ?? {}, "Equip_ID", "Equipment_ID", "EquipId");
-      const destinationInventory = inventories.rows.find((row) => ((destinationInventoryId && inventoryKey(row) === destinationInventoryId) || (value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId)) && (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber));
+      const plateNumber = transactionPlateNumber || value(sourceInventory?.record ?? {}, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial");
+      const destinationInventory = inventories.rows.find((row) =>
+        destinationInventoryId && inventoryKey(row) === destinationInventoryId && (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
+      ) || (!destinationInventoryId ? inventories.rows.find((row) =>
+        value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId &&
+        value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId &&
+        (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
+      ) : undefined);
       if (!sourceInventory || !destinationInventory) throw new InventoryActionError("ไม่พบคลังต้นทางหรือปลายทาง");
       const originalQuantity = numberValue(transaction.record, "Original_Qty") || numberValue(transaction.record, "Qty", "Quantity");
       const outstandingQuantity = numberValue(transaction.record, "Outstanding_Qty") || numberValue(transaction.record, "Qty", "Quantity");

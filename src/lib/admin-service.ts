@@ -72,7 +72,7 @@ export type AdminData = {
   companies: Array<{ id: string; name: string; users: number; total: number; available: number; borrowed: number; broken: number; transactions: number }>;
   users: Array<{ id: string; companyId: string; companyName: string; role: string; rank: string; firstName: string; lastName: string; email: string; phone: string; gmail: string }>;
   equipments: Array<{ id: string; name: string; category: string; requirePlate: boolean; picture: string }>;
-  inventories: Array<{ id: string; companyId: string; companyName: string; equipmentId: string; equipmentName: string; category: string; plateNumber: string; requirePlate: boolean; picture: string; total: number; available: number; borrowed: number; broken: number }>;
+  inventories: Array<{ id: string; companyId: string; companyName: string; assetOwnerCompanyId: string; equipmentId: string; equipmentName: string; category: string; plateNumber: string; requirePlate: boolean; picture: string; total: number; available: number; borrowed: number; broken: number }>;
   transactions: AdminTransaction[];
   maintenance: AdminMaintenance[];
   logs: AdminAuditLog[];
@@ -204,7 +204,17 @@ export async function getAdminData(): Promise<AdminData> {
   const inventories = inventoriesTable.rows.map(({ record }) => {
     const equipmentId = field(record, "Equip_ID");
     const equipment = equipments.find((item) => item.id === equipmentId);
-    return { id: field(record, "Inv_ID"), companyId: field(record, "Company_ID"), companyName: companyNames.get(field(record, "Company_ID")) || field(record, "Company_Name"), equipmentId, equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์", category: equipmentCategories.get(equipmentId) || "ไม่ระบุหมวดหมู่", plateNumber: field(record, "Plate_Number"), requirePlate: Boolean(equipment?.requirePlate), picture: equipment?.picture || getEquipmentImage(equipmentNames.get(equipmentId) || ""), total: number(record, "Qty_Total"), available: number(record, "Qty_Available"), borrowed: number(record, "Qty_Borrowed"), broken: number(record, "Qty_Broken") };
+    const companyId = field(record, "Company_ID");
+    const plateNumber = field(record, "Plate_Number");
+    const inferredOwner = transactionsTable.rows.find(({ record: transaction }) => {
+      if (field(transaction, "Transaction_Type").toLowerCase() === "return" || !["borrowed", "overdue"].includes(field(transaction, "Status").toLowerCase())) return false;
+      if (field(transaction, "Borrower_Company_ID") !== companyId || field(transaction, "Owner_Company_ID") === companyId) return false;
+      const sourceInventory = inventoryById.get(field(transaction, "Inv_ID")) || {};
+      const transactionEquipmentId = field(transaction, "Equip_ID") || field(sourceInventory, "Equip_ID");
+      const transactionPlateNumber = field(transaction, "Plate_Number") || field(sourceInventory, "Plate_Number");
+      return transactionEquipmentId === equipmentId && (!transactionPlateNumber || transactionPlateNumber === plateNumber);
+    });
+    return { id: field(record, "Inv_ID"), companyId, companyName: companyNames.get(companyId) || field(record, "Company_Name"), assetOwnerCompanyId: field(record, "Asset_Owner_Company_ID") || field(inferredOwner?.record || {}, "Owner_Company_ID"), equipmentId, equipmentName: equipmentNames.get(equipmentId) || "ไม่ระบุชื่อยุทโธปกรณ์", category: equipmentCategories.get(equipmentId) || "ไม่ระบุหมวดหมู่", plateNumber, requirePlate: Boolean(equipment?.requirePlate), picture: equipment?.picture || getEquipmentImage(equipmentNames.get(equipmentId) || ""), total: number(record, "Qty_Total"), available: number(record, "Qty_Available"), borrowed: number(record, "Qty_Borrowed"), broken: number(record, "Qty_Broken") };
   });
   const transactions = transactionsTable.rows.map(({ record }) => {
     const inventoryId = field(record, "Inv_ID");
@@ -252,12 +262,13 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
   if (admin.role !== "Admin") throw new Error("ไม่มีสิทธิ์ผู้ดูแลระบบ");
   return withSheetsMutationLock(async () => {
     const action = String(input.action || "");
-    const [companySource, users, equipmentSource, inventories, transactionSource, maintenanceSource, logsSource] = await Promise.all([table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log")]);
+    const [companySource, users, equipmentSource, inventorySource, transactionSource, maintenanceSource, logsSource] = await Promise.all([table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log")]);
     const updates: Update[] = [];
     const companies = withColumns(companySource, ["Is_Active"], updates);
     const logs = withColumns(logsSource, ["Details"], updates);
     let maintenance = maintenanceSource;
     const equipments = withColumns(equipmentSource, ["Picture", "Is_Active"], updates);
+    const inventories = withColumns(inventorySource, ["Asset_Owner_Company_ID"], updates);
     let target = String(input.id || "");
     let auditContext: Record<string, string> = {};
     let rangesToClear: string[] = [];
@@ -364,12 +375,12 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
         throw new Error("Serial/ทะเบียนนี้ถูกใช้งานอยู่แล้ว กรุณาตรวจสอบเลขให้ถูกต้อง");
       }
       if (adding) {
-        const existing = inventories.rows.find(({ record }) => field(record, "Company_ID") === companyId && field(record, "Equip_ID") === equipmentId && field(record, "Plate_Number") === plateNumber);
+        const existing = inventories.rows.find(({ record }) => field(record, "Company_ID") === companyId && field(record, "Equip_ID") === equipmentId && field(record, "Plate_Number") === plateNumber && (!field(record, "Asset_Owner_Company_ID") || field(record, "Asset_Owner_Company_ID") === companyId));
         if (requirePlate && inputTotal !== 1) throw new Error("ยุทโธปกรณ์แบบแยกรายคันเพิ่มได้ครั้งละ 1 รายการ");
         if (existing) {
           updates.push(cell(inventories, existing.rowNumber, requireColumn(inventories, "Qty_Total"), number(existing.record, "Qty_Total") + inputTotal), cell(inventories, existing.rowNumber, requireColumn(inventories, "Qty_Available"), number(existing.record, "Qty_Available") + inputTotal));
           target = field(existing.record, "Inv_ID");
-        } else updates.push(append(inventories, valuesFor(inventories, { Inv_ID: target, Company_ID: companyId, Company_Name: companyName, Equip_ID: equipmentId, Plate_Number: plateNumber, Qty_Total: inputTotal, Qty_Available: inputTotal, Qty_Borrowed: 0, Qty_Broken: 0 })));
+        } else updates.push(append(inventories, valuesFor(inventories, { Inv_ID: target, Company_ID: companyId, Company_Name: companyName, Asset_Owner_Company_ID: companyId, Equip_ID: equipmentId, Plate_Number: plateNumber, Qty_Total: inputTotal, Qty_Available: inputTotal, Qty_Borrowed: 0, Qty_Broken: 0 })));
       } else {
         if (!row) throw new Error("ไม่พบรายการในคลัง");
         const borrowed = number(row.record, "Qty_Borrowed");
@@ -392,14 +403,27 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       const quantity = Math.floor(Number(input.quantity));
       if (!source) throw new Error("ไม่พบรายการคลังต้นทาง");
       const sourceCompanyId = field(source.record, "Company_ID");
+      const sourceAssetOwnerCompanyId = field(source.record, "Asset_Owner_Company_ID");
+      if (sourceAssetOwnerCompanyId && sourceAssetOwnerCompanyId !== sourceCompanyId) throw new Error("ไม่สามารถเคลื่อนย้ายยุทโธปกรณ์ที่กองร้อยนี้รับยืมมาได้ ต้องคืนเจ้าของเดิมก่อน");
+      const sourceEquipmentId = field(source.record, "Equip_ID");
+      const sourcePlateNumber = field(source.record, "Plate_Number");
+      const activeInbound = transactionSource.rows.some(({ record }) => {
+        if (field(record, "Transaction_Type").toLowerCase() === "return" || !["borrowed", "overdue"].includes(field(record, "Status").toLowerCase())) return false;
+        if (field(record, "Borrower_Company_ID") !== sourceCompanyId || field(record, "Owner_Company_ID") === sourceCompanyId) return false;
+        const origin = inventories.rows.find(({ record: inventory }) => field(inventory, "Inv_ID") === field(record, "Inv_ID"));
+        const transactionEquipmentId = field(record, "Equip_ID") || field(origin?.record || {}, "Equip_ID");
+        const transactionPlateNumber = field(record, "Plate_Number") || field(origin?.record || {}, "Plate_Number");
+        return transactionEquipmentId === sourceEquipmentId && (!transactionPlateNumber || transactionPlateNumber === sourcePlateNumber);
+      });
+      if (activeInbound) throw new Error("ไม่สามารถเคลื่อนย้ายยุทโธปกรณ์ที่กำลังยืมจากกองร้อยอื่น ต้องคืนเจ้าของเดิมก่อน");
       if (!destinationCompanyId || destinationCompanyId === sourceCompanyId) throw new Error("กรุณาเลือกกองร้อยปลายทางที่ต่างจากต้นทาง");
       const available = number(source.record, "Qty_Available");
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > available) throw new Error(`ย้ายได้สูงสุด ${available} รายการ`);
-      const equipmentId = field(source.record, "Equip_ID");
-      const plateNumber = field(source.record, "Plate_Number");
+      const equipmentId = sourceEquipmentId;
+      const plateNumber = sourcePlateNumber;
       const destinationCompanyName = field(companies.rows.find(({ record }) => field(record, "Company_ID") === destinationCompanyId)?.record || {}, "Company_Name");
       if (!destinationCompanyName) throw new Error("ไม่พบกองร้อยปลายทาง");
-      const destination = inventories.rows.find(({ record }) => field(record, "Company_ID") === destinationCompanyId && field(record, "Equip_ID") === equipmentId && field(record, "Plate_Number") === plateNumber);
+      const destination = inventories.rows.find(({ record }) => field(record, "Company_ID") === destinationCompanyId && field(record, "Equip_ID") === equipmentId && field(record, "Plate_Number") === plateNumber && (!field(record, "Asset_Owner_Company_ID") || field(record, "Asset_Owner_Company_ID") === destinationCompanyId));
       updates.push(
         cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Total"), number(source.record, "Qty_Total") - quantity),
         cell(inventories, source.rowNumber, requireColumn(inventories, "Qty_Available"), available - quantity),
@@ -410,7 +434,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
           cell(inventories, destination.rowNumber, requireColumn(inventories, "Qty_Available"), number(destination.record, "Qty_Available") + quantity),
         );
       } else {
-        updates.push(append(inventories, valuesFor(inventories, { Inv_ID: `INV-${randomUUID().slice(0, 8)}`, Company_ID: destinationCompanyId, Company_Name: destinationCompanyName, Equip_ID: equipmentId, Plate_Number: plateNumber, Qty_Total: quantity, Qty_Available: quantity, Qty_Borrowed: 0, Qty_Broken: 0 })));
+        updates.push(append(inventories, valuesFor(inventories, { Inv_ID: `INV-${randomUUID().slice(0, 8)}`, Company_ID: destinationCompanyId, Company_Name: destinationCompanyName, Asset_Owner_Company_ID: destinationCompanyId, Equip_ID: equipmentId, Plate_Number: plateNumber, Qty_Total: quantity, Qty_Available: quantity, Qty_Borrowed: 0, Qty_Broken: 0 })));
       }
       target = field(source.record, "Inv_ID");
     } else if (action === "delete-inventory") {

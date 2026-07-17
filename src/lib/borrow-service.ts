@@ -179,6 +179,33 @@ function getInventorySelectionKey(row: SheetRow, requirePlate: boolean) {
   return `${inventoryId}::${plateNumber}::row-${row.rowNumber}`;
 }
 
+function getAssetOwnerCompanyId(record: SheetRecord) {
+  return getField(record, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID");
+}
+
+function isForeignBorrowedInventory(row: SheetRow, companyId: string, inboundQuantity: number) {
+  const assetOwnerCompanyId = getAssetOwnerCompanyId(row.record);
+  return (assetOwnerCompanyId && assetOwnerCompanyId !== companyId) || inboundQuantity > 0;
+}
+
+function isBorrowDestinationForOwner(
+  transactions: SheetTable,
+  row: SheetRow,
+  ownerCompanyId: string,
+  borrowerCompanyId: string,
+) {
+  const assetOwnerCompanyId = getAssetOwnerCompanyId(row.record);
+  if (assetOwnerCompanyId) return assetOwnerCompanyId === ownerCompanyId;
+  const inventoryId = getInventoryKey(row);
+  return transactions.rows.some(({ record }) =>
+    getField(record, "Destination_Inventory_ID", "Borrower_Inventory_ID") === inventoryId &&
+    getField(record, "Owner_Company_ID", "OwnerCompanyId") === ownerCompanyId &&
+    getField(record, "Borrower_Company_ID", "BorrowerCompanyId") === borrowerCompanyId &&
+    getField(record, "Transaction_Type").toLowerCase() !== "return" &&
+    ["borrowed", "overdue"].includes(getField(record, "Status").toLowerCase()),
+  );
+}
+
 function inboundBorrowedByInventory(transactions: SheetTable, inventories: SheetRow[], companyId: string) {
   const inbound = new Map<string, number>();
   transactions.rows.forEach(({ record }) => {
@@ -187,8 +214,10 @@ function inboundBorrowedByInventory(transactions: SheetTable, inventories: Sheet
     const ownerCompanyId = getField(record, "Owner_Company_ID", "OwnerCompanyId");
     const borrowerCompanyId = getField(record, "Borrower_Company_ID", "BorrowerCompanyId");
     if (borrowerCompanyId !== companyId || ownerCompanyId === borrowerCompanyId) return;
-    const equipmentId = getField(record, "Equip_ID", "Equipment_ID", "EquipId");
-    const plateNumber = getPlateOrSerial(record);
+    const sourceInventoryId = getField(record, "Inv_ID", "Inventory_ID", "InventoryId");
+    const sourceInventory = inventories.find((row) => sourceInventoryId && getInventoryKey(row) === sourceInventoryId);
+    const equipmentId = getField(record, "Equip_ID", "Equipment_ID", "EquipId") || getField(sourceInventory?.record ?? {}, "Equip_ID", "Equipment_ID", "EquipId");
+    const plateNumber = getPlateOrSerial(record) || getPlateOrSerial(sourceInventory?.record ?? {});
     const recordedDestinationId = getField(record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
     const destination = inventories.find((row) => recordedDestinationId && getInventoryKey(row) === recordedDestinationId && getField(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && (!equipmentId || getField(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId) && (!plateNumber || getPlateOrSerial(row.record) === plateNumber))
       || inventories.find((row) => getField(row.record, "Company_ID", "CompanyId") === borrowerCompanyId && getField(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId && (!plateNumber || getPlateOrSerial(row.record) === plateNumber));
@@ -220,6 +249,19 @@ function columnLetter(index: number) {
 }
 
 type RowField = { aliases: string[]; value: string | number };
+
+type SheetUpdate = { range: string; values: Array<Array<string | number>> };
+
+function withColumns(table: SheetTable, columns: string[], updates: SheetUpdate[]) {
+  const headers = [...table.headers];
+  for (const name of columns) {
+    if (getHeaderIndex(headers, name) < 0) {
+      updates.push({ range: `'${table.name}'!${columnLetter(headers.length)}1`, values: [[name]] });
+      headers.push(name);
+    }
+  }
+  return { ...table, headers };
+}
 
 function buildRow(headers: string[], fields: RowField[]) {
   return headers.map((header) => {
@@ -270,13 +312,14 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
       const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
 
       const inboundBorrowed = inbound.get(getInventoryKey(row)) || 0;
+      const foreignBorrowed = isForeignBorrowedInventory(row, user.companyId, inboundBorrowed);
       return {
         selectionId: getInventorySelectionKey(row, requirePlate),
         inventoryId: getInventoryKey(row),
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
-        available: Math.max(0, getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") - inboundBorrowed),
+        available: foreignBorrowed ? 0 : getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable"),
         inboundBorrowed,
         requirePlate,
         plateNumber: getPlateOrSerial(row.record),
@@ -337,7 +380,11 @@ export async function getCategoryInventoryData(
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
-        available: row ? Math.max(0, getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") - (inbound.get(getInventoryKey(row)) || 0)) : 0,
+        available: row
+          ? isForeignBorrowedInventory(row, user.companyId, inbound.get(getInventoryKey(row)) || 0)
+            ? 0
+            : getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable")
+          : 0,
         inboundBorrowed: row ? inbound.get(getInventoryKey(row)) || 0 : 0,
         total: row ? getNumber(row.record, "Qty_Total", "Total_Quantity", "QtyTotal") : 0,
         broken: row ? getNumber(row.record, "Qty_Broken", "Broken_Quantity", "QtyBroken") : 0,
@@ -381,7 +428,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       throw new BorrowValidationError("รูปหลักฐานไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");
     }
 
-    const [companiesTable, equipmentTable, inventoriesTable, transactionsTable, auditTable, account] = await Promise.all([
+    const [companiesTable, equipmentTable, inventorySource, transactionSource, auditTable, account] = await Promise.all([
       getSheetTable("Companies"),
       getEquipmentTable(),
       getSheetTable("Inventories"),
@@ -389,6 +436,9 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       getSheetTable("Audit_Log"),
       getAccountById(user.userId),
     ]);
+    const updates: SheetUpdate[] = [];
+    const inventoriesTable = withColumns(inventorySource, ["Asset_Owner_Company_ID"], updates);
+    const transactionsTable = withColumns(transactionSource, ["Group_Tx_ID", "Destination_Inventory_ID", "Equip_ID", "Plate_Number"], updates);
     const borrowerCompany = companiesTable.rows.find(
       ({ record }) => getField(record, "Company_ID", "CompanyId", "ID") === input.borrowerCompanyId,
     );
@@ -425,22 +475,29 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       const equipment = equipmentById.get(equipmentId) ?? {};
       const physicalAvailable = getNumber(inventoryRow.record, "Qty_Available", "Available_Quantity", "QtyAvailable");
       const inboundQuantity = inbound.get(getInventoryKey(inventoryRow)) || 0;
+      const assetOwnerCompanyId = getAssetOwnerCompanyId(inventoryRow.record);
       const available = Math.max(0, physicalAvailable - inboundQuantity);
       const borrowed = getNumber(inventoryRow.record, "Qty_Borrowed", "Borrowed_Quantity", "QtyBorrowed");
       const total = getNumber(inventoryRow.record, "Qty_Total", "Total_Quantity", "QtyTotal");
       const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
       const quantity = requirePlate ? 1 : Math.floor(Number(requestItem.quantity));
       const plateNumber = getPlateOrSerial(inventoryRow.record);
-      if (!selfUse && inboundQuantity > 0) {
+      if (!selfUse && ((assetOwnerCompanyId && assetOwnerCompanyId !== user.companyId) || inboundQuantity > 0)) {
         throw new BorrowValidationError(`${getField(equipment, "Equip_Name", "Equipment_Name", "Name") || "รายการที่เลือก"}${plateNumber ? ` (${plateNumber})` : ""} เป็นยุทโธปกรณ์ที่กองร้อยรับยืมมา จึงห้ามเบิกส่งต่อให้กองร้อยอื่นโดยเด็ดขาด`);
       }
       if (requirePlate && (!requestItem.plateNumber || requestItem.plateNumber !== plateNumber)) {
         throw new BorrowValidationError("กรุณาเลือกยานพาหนะตามหมายเลขทะเบียนที่แสดง");
       }
-      const destinationInventory = selfUse ? inventoryRow : inventoriesTable.rows.find(({ record }) =>
-        getField(record, "Company_ID", "CompanyId") === input.borrowerCompanyId &&
-        getField(record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId") === equipmentId &&
-        (!plateNumber || getPlateOrSerial(record) === plateNumber),
+      const destinationInventory = selfUse ? inventoryRow : inventoriesTable.rows.find((row) =>
+        getField(row.record, "Company_ID", "CompanyId") === input.borrowerCompanyId &&
+        getField(row.record, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId") === equipmentId &&
+        (!plateNumber || getPlateOrSerial(row.record) === plateNumber) &&
+        isBorrowDestinationForOwner(
+          transactionsTable,
+          row,
+          user.companyId,
+          input.borrowerCompanyId,
+        ),
       );
 
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > available) {
@@ -485,6 +542,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       "QtyBorrowed",
     );
     const totalColumn = getHeaderIndex(inventoriesTable.headers, "Qty_Total", "Total_Quantity", "QtyTotal");
+    const assetOwnerColumn = getHeaderIndex(inventoriesTable.headers, "Asset_Owner_Company_ID");
     if (availableColumn < 0 || borrowedColumn < 0 || totalColumn < 0) {
       throw new Error("Inventories sheet must contain Qty_Total, Qty_Available and Qty_Borrowed columns.");
     }
@@ -531,7 +589,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       },
     ]);
     let nextInventoryRow = nextRowNumber(inventoriesTable);
-    const updates: Array<{ range: string; values: Array<Array<string | number>> }> = requestedRows.flatMap((item) => {
+    const inventoryUpdates: SheetUpdate[] = requestedRows.flatMap((item) => {
       const itemUpdates: Array<{ range: string; values: Array<Array<string | number>> }> = [
         {
           range: `'Inventories'!${columnLetter(availableColumn)}${item.inventoryRow.rowNumber}`,
@@ -558,6 +616,10 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
             range: `'Inventories'!${columnLetter(availableColumn)}${item.destinationInventory.rowNumber}`,
             values: [[item.destinationAvailable + item.quantity]],
           },
+          {
+            range: `'Inventories'!${columnLetter(assetOwnerColumn)}${item.destinationInventory.rowNumber}`,
+            values: [[user.companyId]],
+          },
         );
       } else if (!selfUse) {
         const rowNumber = nextInventoryRow++;
@@ -567,6 +629,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
             { aliases: ["Inv_ID", "Inventory_ID", "InventoryId", "ID"], value: item.destinationInventoryId },
             { aliases: ["Company_ID", "CompanyId"], value: input.borrowerCompanyId },
             { aliases: ["Company_Name", "CompanyName"], value: companyNameById.get(input.borrowerCompanyId) || "" },
+            { aliases: ["Asset_Owner_Company_ID"], value: user.companyId },
             { aliases: ["Equip_ID", "Equipment_ID", "EquipId", "EquipmentId"], value: item.equipmentId },
             { aliases: ["Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial"], value: item.plateNumber },
             { aliases: ["Qty_Total", "Total_Quantity", "QtyTotal"], value: item.quantity },
@@ -580,6 +643,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       return itemUpdates;
     });
     updates.push(
+      ...inventoryUpdates,
       {
         range: `'Transactions'!A${transactionStartRow}:${columnLetter(transactionsTable.headers.length - 1)}${
           transactionStartRow + transactionRows.length - 1
