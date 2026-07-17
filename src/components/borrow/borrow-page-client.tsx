@@ -66,7 +66,8 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   );
   const filteredInventory = useMemo(() => {
     const keyword = equipmentQuery.trim().toLocaleLowerCase("th");
-    return keyword ? data.inventory.filter((item) => `${item.name} ${item.category} ${item.plateNumber || ""}`.toLocaleLowerCase("th").includes(keyword)) : data.inventory;
+    const matches = keyword ? data.inventory.filter((item) => `${item.name} ${item.category} ${item.plateNumber || ""}`.toLocaleLowerCase("th").includes(keyword)) : data.inventory;
+    return [...matches].sort((first, second) => first.stockType.localeCompare(second.stockType) || first.name.localeCompare(second.name, "th"));
   }, [data.inventory, equipmentQuery]);
 
   function showToast(type: "success" | "error", message: string) {
@@ -75,7 +76,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   }
 
   function toggleItem(item: BorrowInventoryItem) {
-    if (!selfUse && borrowerCompanyId && item.inboundBorrowed > 0) {
+    if (!selfUse && borrowerCompanyId && item.stockType === "borrowed") {
       showToast("error", "รายการนี้เป็นยุทโธปกรณ์ที่รับยืมมา จึงห้ามส่งต่อให้กองร้อยอื่น");
       return;
     }
@@ -142,7 +143,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       showToast("error", "กรุณาเลือกยุทโธปกรณ์อย่างน้อย 1 รายการ");
       return;
     }
-    if (!selfUse && selectedItems.some((item) => item.inboundBorrowed > 0)) {
+    if (!selfUse && selectedItems.some((item) => item.stockType === "borrowed")) {
       showToast("error", "พบยุทโธปกรณ์ที่รับยืมมาในรายการ ระบบห้ามนำไปให้กองร้อยอื่นยืมต่อ");
       return;
     }
@@ -322,7 +323,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
               {filteredInventory.length ? (
                 filteredInventory.map((item) => {
                   const isSelected = selected[item.selectionId] !== undefined;
-                  const relendingBlocked = Boolean(borrowerCompanyId && !selfUse && item.inboundBorrowed > 0);
+                  const relendingBlocked = Boolean(borrowerCompanyId && !selfUse && item.stockType === "borrowed");
                   return (
                     <article
                       key={item.selectionId}
@@ -350,7 +351,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                             {item.category} · พร้อมเบิก {item.available.toLocaleString("th-TH")}
                           </span>
                           {item.plateNumber && <span className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700"><Hash className="size-3.5 shrink-0" /><span className="truncate">ทะเบียน / Serial: {item.plateNumber}</span></span>}
-                          {item.inboundBorrowed > 0 && <span className="mt-1.5 block text-[11px] font-bold text-red-600">รับยืมมาจากกองร้อยอื่น · ห้ามส่งต่อ</span>}
+                          {item.stockType === "borrowed" && <span className="mt-1.5 inline-flex rounded-full bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">ของยืมมา · ใช้ได้เฉพาะภายในหน่วย</span>}
                         </span>
                         <span
                           className={`grid size-6 shrink-0 place-items-center rounded-full border-2 ${

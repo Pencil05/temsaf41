@@ -27,6 +27,7 @@ export type BorrowInventoryItem = {
   category: string;
   available: number;
   inboundBorrowed: number;
+  stockType: "owned" | "borrowed";
   requirePlate: boolean;
   plateNumber: string;
 };
@@ -185,7 +186,8 @@ function getAssetOwnerCompanyId(record: SheetRecord) {
 
 function isForeignBorrowedInventory(row: SheetRow, companyId: string, inboundQuantity: number) {
   const assetOwnerCompanyId = getAssetOwnerCompanyId(row.record);
-  return (assetOwnerCompanyId && assetOwnerCompanyId !== companyId) || inboundQuantity > 0;
+  const stockStatus = getField(row.record, "Stock_Status", "Inventory_Status").toLowerCase();
+  return stockStatus === "borrowed" || (assetOwnerCompanyId && assetOwnerCompanyId !== companyId) || inboundQuantity > 0;
 }
 
 function isBorrowDestinationForOwner(
@@ -319,8 +321,9 @@ export async function getBorrowPageData(user: SessionUser): Promise<BorrowPageDa
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
-        available: foreignBorrowed ? 0 : getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable"),
+        available: getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable"),
         inboundBorrowed,
+        stockType: foreignBorrowed ? "borrowed" as const : "owned" as const,
         requirePlate,
         plateNumber: getPlateOrSerial(row.record),
       };
@@ -380,12 +383,9 @@ export async function getCategoryInventoryData(
         equipmentId,
         name: getField(equipment, "Equip_Name", "Equipment_Name", "EquipName", "Name") || "ไม่ระบุชื่อ",
         category: getField(equipment, "Category", "Category_Name", "Equip_Category") || "อื่น ๆ",
-        available: row
-          ? isForeignBorrowedInventory(row, user.companyId, inbound.get(getInventoryKey(row)) || 0)
-            ? 0
-            : getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable")
-          : 0,
+        available: row ? getNumber(row.record, "Qty_Available", "Available_Quantity", "QtyAvailable") : 0,
         inboundBorrowed: row ? inbound.get(getInventoryKey(row)) || 0 : 0,
+        stockType: row && isForeignBorrowedInventory(row, user.companyId, inbound.get(getInventoryKey(row)) || 0) ? "borrowed" as const : "owned" as const,
         total: row ? getNumber(row.record, "Qty_Total", "Total_Quantity", "QtyTotal") : 0,
         broken: row ? getNumber(row.record, "Qty_Broken", "Broken_Quantity", "QtyBroken") : 0,
         requirePlate: getBoolean(equipment, "Require_Plate", "RequirePlate"),
@@ -437,7 +437,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       getAccountById(user.userId),
     ]);
     const updates: SheetUpdate[] = [];
-    const inventoriesTable = withColumns(inventorySource, ["Asset_Owner_Company_ID"], updates);
+    const inventoriesTable = withColumns(inventorySource, ["Asset_Owner_Company_ID", "Stock_Status"], updates);
     const transactionsTable = withColumns(transactionSource, ["Group_Tx_ID", "Destination_Inventory_ID", "Equip_ID", "Plate_Number"], updates);
     const borrowerCompany = companiesTable.rows.find(
       ({ record }) => getField(record, "Company_ID", "CompanyId", "ID") === input.borrowerCompanyId,
@@ -475,14 +475,14 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
       const equipment = equipmentById.get(equipmentId) ?? {};
       const physicalAvailable = getNumber(inventoryRow.record, "Qty_Available", "Available_Quantity", "QtyAvailable");
       const inboundQuantity = inbound.get(getInventoryKey(inventoryRow)) || 0;
-      const assetOwnerCompanyId = getAssetOwnerCompanyId(inventoryRow.record);
-      const available = Math.max(0, physicalAvailable - inboundQuantity);
+      const foreignBorrowed = isForeignBorrowedInventory(inventoryRow, user.companyId, inboundQuantity);
+      const available = foreignBorrowed && !selfUse ? 0 : physicalAvailable;
       const borrowed = getNumber(inventoryRow.record, "Qty_Borrowed", "Borrowed_Quantity", "QtyBorrowed");
       const total = getNumber(inventoryRow.record, "Qty_Total", "Total_Quantity", "QtyTotal");
       const requirePlate = getBoolean(equipment, "Require_Plate", "RequirePlate");
       const quantity = requirePlate ? 1 : Math.floor(Number(requestItem.quantity));
       const plateNumber = getPlateOrSerial(inventoryRow.record);
-      if (!selfUse && ((assetOwnerCompanyId && assetOwnerCompanyId !== user.companyId) || inboundQuantity > 0)) {
+      if (!selfUse && foreignBorrowed) {
         throw new BorrowValidationError(`${getField(equipment, "Equip_Name", "Equipment_Name", "Name") || "รายการที่เลือก"}${plateNumber ? ` (${plateNumber})` : ""} เป็นยุทโธปกรณ์ที่กองร้อยรับยืมมา จึงห้ามเบิกส่งต่อให้กองร้อยอื่นโดยเด็ดขาด`);
       }
       if (requirePlate && (!requestItem.plateNumber || requestItem.plateNumber !== plateNumber)) {
@@ -543,6 +543,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
     );
     const totalColumn = getHeaderIndex(inventoriesTable.headers, "Qty_Total", "Total_Quantity", "QtyTotal");
     const assetOwnerColumn = getHeaderIndex(inventoriesTable.headers, "Asset_Owner_Company_ID");
+    const stockStatusColumn = getHeaderIndex(inventoriesTable.headers, "Stock_Status");
     if (availableColumn < 0 || borrowedColumn < 0 || totalColumn < 0) {
       throw new Error("Inventories sheet must contain Qty_Total, Qty_Available and Qty_Borrowed columns.");
     }
@@ -620,6 +621,10 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
             range: `'Inventories'!${columnLetter(assetOwnerColumn)}${item.destinationInventory.rowNumber}`,
             values: [[user.companyId]],
           },
+          {
+            range: `'Inventories'!${columnLetter(stockStatusColumn)}${item.destinationInventory.rowNumber}`,
+            values: [["Borrowed"]],
+          },
         );
       } else if (!selfUse) {
         const rowNumber = nextInventoryRow++;
@@ -630,6 +635,7 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
             { aliases: ["Company_ID", "CompanyId"], value: input.borrowerCompanyId },
             { aliases: ["Company_Name", "CompanyName"], value: companyNameById.get(input.borrowerCompanyId) || "" },
             { aliases: ["Asset_Owner_Company_ID"], value: user.companyId },
+            { aliases: ["Stock_Status"], value: "Borrowed" },
             { aliases: ["Equip_ID", "Equipment_ID", "EquipId", "EquipmentId"], value: item.equipmentId },
             { aliases: ["Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial"], value: item.plateNumber },
             { aliases: ["Qty_Total", "Total_Quantity", "QtyTotal"], value: item.quantity },

@@ -38,6 +38,7 @@ export type GlobalSearchItem = {
 export type UserDashboardData = {
   companyName: string;
   categories: DashboardCategory[];
+  borrowedCategories: DashboardCategory[];
   activities: DashboardActivity[];
 };
 
@@ -286,6 +287,7 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
     }),
   );
   const quantityByCategory = new Map<string, number>();
+  const borrowedQuantityByCategory = new Map<string, number>();
   const categoryNames = new Set<string>();
 
   masterEquipments.filter((equipment) => !["false", "0", "deleted", "inactive"].includes(getField(equipment, "Is_Active", "Active", "Status").toLowerCase())).forEach((equipment) => {
@@ -300,17 +302,36 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
   );
 
   companyInventories.forEach((inventory) => {
+    const inventoryId = getField(inventory, "Inv_ID", "Inventory_ID", "InventoryId", "ID");
     const equipmentId = getField(inventory, "Equip_ID", "Equipment_ID", "EquipId", "EquipmentId");
+    const plateNumber = getField(inventory, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber");
     const category =
       equipmentById.get(equipmentId)?.category ||
       getField(inventory, "Category", "Category_Name", "Equipment_Category", "Equip_Category") ||
       "อื่น ๆ";
     const quantity = getNumber(inventory, "Qty_Total", "Qty", "Quantity", "Total_Quantity", "Available_Quantity", "Qty_Available");
+    const explicitOwnerCompanyId = getField(inventory, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID");
+    const stockStatus = getField(inventory, "Stock_Status", "Inventory_Status").toLowerCase();
+    const activeInbound = transactions.some((transaction) => {
+      if (getField(transaction, "Transaction_Type").toLowerCase() === "return" || !["borrowed", "overdue"].includes(getField(transaction, "Status").toLowerCase())) return false;
+      const ownerCompanyId = getField(transaction, "Owner_Company_ID", "OwnerCompanyId");
+      const borrowerCompanyId = getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId");
+      if (borrowerCompanyId !== user.companyId || ownerCompanyId === user.companyId) return false;
+      const destinationInventoryId = getField(transaction, "Destination_Inventory_ID", "Borrower_Inventory_ID");
+      if (destinationInventoryId) return destinationInventoryId === inventoryId;
+      const sourceInventoryId = getField(transaction, "Inv_ID", "Inventory_ID", "InventoryId");
+      const sourceInventory = inventories.find((candidate) => getField(candidate, "Inv_ID", "Inventory_ID", "InventoryId", "ID") === sourceInventoryId);
+      const transactionEquipmentId = getField(transaction, "Equip_ID", "Equipment_ID", "EquipId") || getField(sourceInventory || {}, "Equip_ID", "Equipment_ID", "EquipId");
+      const transactionPlateNumber = getField(transaction, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber") || getField(sourceInventory || {}, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber");
+      return transactionEquipmentId === equipmentId && (!transactionPlateNumber || transactionPlateNumber === plateNumber);
+    });
+    const borrowedStock = Boolean(stockStatus === "borrowed" || (explicitOwnerCompanyId && explicitOwnerCompanyId !== user.companyId) || activeInbound);
 
     if (category) {
       categoryNames.add(category);
     }
-    quantityByCategory.set(category, (quantityByCategory.get(category) ?? 0) + quantity);
+    const target = borrowedStock ? borrowedQuantityByCategory : quantityByCategory;
+    target.set(category, (target.get(category) ?? 0) + quantity);
   });
 
   const transactionActivities = transactions
@@ -389,10 +410,15 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
     name,
     quantity: quantityByCategory.get(name) ?? 0,
   }));
+  const borrowedCategories = Array.from(borrowedQuantityByCategory.entries())
+    .filter(([, quantity]) => quantity > 0)
+    .map(([name, quantity]) => ({ name, quantity }))
+    .sort((a, b) => a.name.localeCompare(b.name, "th"));
 
   return {
     companyName: companyNameById.get(user.companyId) || "หน่วยงานของคุณ",
     categories: categories.sort((a, b) => a.name.localeCompare(b.name, "th")),
+    borrowedCategories,
     activities,
   };
 }

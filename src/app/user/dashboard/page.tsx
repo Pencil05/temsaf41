@@ -56,6 +56,16 @@ export default async function UserDashboardPage({
           </div>
         </section>
 
+        {dashboard.borrowedCategories.length > 0 && <section className="mt-7" aria-labelledby="borrowed-categories-heading">
+          <div className="mb-4 flex items-end justify-between gap-4">
+            <div><p className="text-sm font-medium text-amber-600">ยืมเพื่อใช้งาน</p><h2 id="borrowed-categories-heading" className="mt-1 text-xl font-bold text-slate-900">ยุทโธปกรณ์ที่ยืมมาจากกองร้อยอื่น</h2></div>
+            <p className="text-xs font-semibold text-amber-700">ใช้ภายในหน่วยหรือคืนเท่านั้น</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {dashboard.borrowedCategories.map((category) => <CategoryCard key={`borrowed-${category.name}`} category={category} borrowed />)}
+          </div>
+        </section>}
+
         <section className="mt-9 pb-6" aria-labelledby="activities-heading">
           <p className="text-sm font-medium text-blue-600">ติดตามสถานะ</p>
           <h2 id="activities-heading" className="mt-1 text-xl font-bold text-slate-900">
