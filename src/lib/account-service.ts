@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomBytes } from "node:crypto";
 import { google } from "googleapis";
 import { hashPassword } from "@/lib/password-utils";
 
@@ -15,7 +16,27 @@ export type AccountProfile = {
   phone: string;
   gmail: string;
   profileImage: string;
+  lineLinked: boolean;
+  lineDisplayName: string;
+  lineNotifyEnabled: boolean;
+  lineLinkedAt: string;
 };
+
+export type LineNotificationRecipient = {
+  userId: string;
+  companyId: string;
+  role: "Admin" | "User";
+  lineUserId: string;
+};
+
+const LINE_COLUMNS = [
+  "LINE_User_ID",
+  "LINE_Display_Name",
+  "LINE_Notify_Enabled",
+  "LINE_Linked_At",
+  "LINE_Link_Code",
+  "LINE_Link_Expires_At",
+] as const;
 
 export type AccountSecurity = AccountProfile & {
   passwordHash: string;
@@ -72,6 +93,7 @@ async function users() {
 }
 
 function profile(row: UserRow): AccountProfile {
+  const lineUserId = get(row.record, "LINE_User_ID");
   return {
     userId: get(row.record, "User_ID"),
     companyId: get(row.record, "Company_ID"),
@@ -82,7 +104,45 @@ function profile(row: UserRow): AccountProfile {
     phone: get(row.record, "Phone", "Phone_Number"),
     gmail: get(row.record, "Gmail", "Recovery_Gmail", "Recovery_Email"),
     profileImage: get(row.record, "Profile_Image_URL", "Profile_Image"),
+    lineLinked: Boolean(lineUserId),
+    lineDisplayName: get(row.record, "LINE_Display_Name"),
+    lineNotifyEnabled: get(row.record, "LINE_Notify_Enabled").toLowerCase() !== "false",
+    lineLinkedAt: get(row.record, "LINE_Linked_At"),
   };
+}
+
+function roleOf(row: UserRow): "Admin" | "User" {
+  return ["admin", "administrator", "commander"].includes(get(row.record, "Role", "User_Role").toLowerCase())
+    ? "Admin"
+    : "User";
+}
+
+async function ensureUserColumns(rows: UserRow[], columns: readonly string[]) {
+  const headers = rows[0]?.headers;
+  if (!headers) throw new Error("Users sheet must contain at least one user row.");
+  const missing = columns.filter((name) => !headers.some((header) => normalized(header) === normalized(name)));
+  if (!missing.length) return;
+
+  const sheets = await sheetsClient();
+  const startColumn = headers.length + 1;
+  const endColumn = startColumn + missing.length - 1;
+  const columnLetter = (columnNumber: number) => {
+    let current = columnNumber;
+    let result = "";
+    while (current > 0) {
+      const remainder = (current - 1) % 26;
+      result = String.fromCharCode(65 + remainder) + result;
+      current = Math.floor((current - 1) / 26);
+    }
+    return result;
+  };
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: configuration().spreadsheetId,
+    range: `Users!${columnLetter(startColumn)}1:${columnLetter(endColumn)}1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [missing] },
+  });
+  rows.forEach((row) => row.headers.push(...missing));
 }
 
 function security(row: UserRow): AccountSecurity {
@@ -206,4 +266,71 @@ export async function updateAccountGmail(userId: string, gmail: string) {
   const row = (await users()).find((candidate) => get(candidate.record, "User_ID") === userId);
   if (!row) throw new Error("User not found.");
   await updateCells(row, [{ names: ["Gmail", "Recovery_Gmail", "Recovery_Email"], value: gmail.trim().toLowerCase() }]);
+}
+
+export async function createLineLinkCode(userId: string) {
+  const rows = await users();
+  await ensureUserColumns(rows, LINE_COLUMNS);
+  const row = rows.find((candidate) => get(candidate.record, "User_ID") === userId);
+  if (!row) throw new Error("User not found.");
+  const code = `TEMS-${randomBytes(4).toString("hex").toUpperCase()}`;
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await updateCells(row, [
+    { names: ["LINE_Link_Code"], value: code },
+    { names: ["LINE_Link_Expires_At"], value: expiresAt },
+  ]);
+  return { code, expiresAt };
+}
+
+export async function linkLineAccountByCode(code: string, lineUserId: string, displayName: string) {
+  const rows = await users();
+  await ensureUserColumns(rows, LINE_COLUMNS);
+  const normalizedCode = code.trim().toUpperCase();
+  const row = rows.find((candidate) => get(candidate.record, "LINE_Link_Code").toUpperCase() === normalizedCode);
+  if (!row || !normalizedCode.startsWith("TEMS-")) return null;
+  const expiresAt = Date.parse(get(row.record, "LINE_Link_Expires_At"));
+  if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) return null;
+  const alreadyLinked = rows.find((candidate) =>
+    get(candidate.record, "LINE_User_ID") === lineUserId && get(candidate.record, "User_ID") !== get(row.record, "User_ID"),
+  );
+  if (alreadyLinked) throw new Error("LINE account is already linked to another TEMS user.");
+  await updateCells(row, [
+    { names: ["LINE_User_ID"], value: lineUserId },
+    { names: ["LINE_Display_Name"], value: displayName.trim() },
+    { names: ["LINE_Notify_Enabled"], value: "TRUE" },
+    { names: ["LINE_Linked_At"], value: new Date().toISOString() },
+    { names: ["LINE_Link_Code"], value: "" },
+    { names: ["LINE_Link_Expires_At"], value: "" },
+  ]);
+  return profile(row);
+}
+
+export async function unlinkLineAccount(userId: string) {
+  const rows = await users();
+  await ensureUserColumns(rows, LINE_COLUMNS);
+  const row = rows.find((candidate) => get(candidate.record, "User_ID") === userId);
+  if (!row) throw new Error("User not found.");
+  await updateCells(row, [
+    { names: ["LINE_User_ID"], value: "" },
+    { names: ["LINE_Display_Name"], value: "" },
+    { names: ["LINE_Notify_Enabled"], value: "FALSE" },
+    { names: ["LINE_Linked_At"], value: "" },
+    { names: ["LINE_Link_Code"], value: "" },
+    { names: ["LINE_Link_Expires_At"], value: "" },
+  ]);
+}
+
+export async function getLineNotificationRecipients(): Promise<LineNotificationRecipient[]> {
+  const rows = await users();
+  return rows.flatMap((row) => {
+    const lineUserId = get(row.record, "LINE_User_ID");
+    const enabled = get(row.record, "LINE_Notify_Enabled").toLowerCase() !== "false";
+    if (!lineUserId || !enabled) return [];
+    return [{
+      userId: get(row.record, "User_ID"),
+      companyId: get(row.record, "Company_ID"),
+      role: roleOf(row),
+      lineUserId,
+    }];
+  });
 }

@@ -324,7 +324,9 @@ export async function returnEquipment(
       notification: {
         kind: "return" as const,
         actorName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+        ownerCompanyId: selected[0].ownerCompanyId,
         ownerCompanyName: companyNames.get(selected[0].ownerCompanyId) || selected[0].ownerCompanyId,
+        borrowerCompanyId: selected[0].borrowerCompanyId,
         borrowerCompanyName: companyNames.get(selected[0].borrowerCompanyId) || selected[0].borrowerCompanyId,
         referenceId: returnGroupId,
         occurredAt: now,
@@ -437,6 +439,7 @@ export async function reportDefect(
       notification: {
         kind: "defect" as const,
         actorName: [user.rank, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+        ownerCompanyId: companyId,
         ownerCompanyName: companyNames.get(companyId) || companyId,
         referenceId: maintenanceId,
         occurredAt: now,

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { AccountProfile } from "@/lib/account-service";
 import { OtpPasswordForm } from "@/components/account/otp-password-form";
 import { ProfileForm } from "@/components/account/profile-form";
+import { LineLinkPanel } from "@/components/account/line-link-panel";
 
 export function SettingsProfilePanel({ profile }: { profile: AccountProfile }) {
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -27,6 +28,8 @@ export function SettingsProfilePanel({ profile }: { profile: AccountProfile }) {
     <>
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-7">
         <ProfileForm profile={profile} />
+
+        <LineLinkPanel profile={profile} />
 
         <div className="mt-7 border-t border-slate-200 pt-6">
           <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">

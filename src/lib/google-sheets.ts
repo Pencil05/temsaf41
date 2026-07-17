@@ -5,29 +5,6 @@ import { normalizeUserRole, type SessionUser } from "@/lib/auth-session";
 import { migrateLegacyPassword } from "@/lib/account-service";
 import { needsPasswordRehash, verifyPassword } from "@/lib/password-utils";
 
-const mockUsers = [
-  {
-    userId: "admin-001",
-    companyId: "company-001",
-    email: "admin@wing41.com",
-    role: "Admin" as const,
-    rank: "Cmdr",
-    firstName: "TEMS",
-    lastName: "Administrator",
-    password: "password123",
-  },
-  {
-    userId: "user-001",
-    companyId: "company-002",
-    email: "user@wing41.com",
-    role: "User" as const,
-    rank: "Sgt",
-    firstName: "Wing",
-    lastName: "41 User",
-    password: "password123",
-  },
-];
-
 type SheetRecord = Record<string, string>;
 
 type CachedValue<T> = { value: T; expiresAt: number };
@@ -271,25 +248,7 @@ export async function authenticateUser(email: string, password: string): Promise
     console.error("Google Sheets authentication failed", error);
   }
 
-  if (process.env.NODE_ENV === "production" || process.env.ALLOW_MOCK_AUTH !== "true") return null;
-
-  const mockUser = mockUsers.find(
-    (candidate) => candidate.email.toLowerCase() === normalizedEmail && candidate.password === password,
-  );
-
-  if (!mockUser) {
-    return null;
-  }
-
-  return {
-    userId: mockUser.userId,
-    companyId: mockUser.companyId,
-    email: mockUser.email,
-    role: mockUser.role,
-    rank: mockUser.rank,
-    firstName: mockUser.firstName,
-    lastName: mockUser.lastName,
-  };
+  return null;
 }
 
 export async function getUserDashboardData(user: SessionUser): Promise<UserDashboardData> {

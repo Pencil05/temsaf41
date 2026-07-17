@@ -27,8 +27,6 @@ For borrowing evidence and reliable multi-item receipts, use these columns in `T
 
 The app limits stored evidence images to about 42 KB so each value remains below the Google Sheets per-cell limit. For larger production images, replace data URLs with a Google Drive or Cloud Storage URL while keeping the same `Evidence_Image` column.
 
-Set `SMS_WEBHOOK_URL` to an SMS provider endpoint for production OTP delivery. Without it, development mode returns a test OTP on screen.
-
 ### Production OTP delivery
 
 The password flow is: enter phone number, request OTP, verify the six-digit code, and only then show the new-password form. After successful verification, the app stores the verified number in `Users.Phone`.
@@ -49,7 +47,7 @@ The webhook receives JSON in this format:
 }
 ```
 
-Production refuses to issue a fake OTP when `SMS_WEBHOOK_URL` is missing. Development mode still displays a test code for local testing.
+OTP delivery requires a configured provider. The application never exposes OTP values or accepts a verification bypass.
 
 ### LINE friend picker
 
@@ -67,6 +65,19 @@ Configure these server-only variables locally and in Vercel:
 - `LINE_OA_TARGET_ID` — required only in `push` mode; use the LINE user ID, group ID, or room ID received from a Messaging API webhook.
 
 The notification contains the operator, source and destination companies, equipment list, quantities, timestamps, due date when applicable, and the TEMS reference number. Sending messages uses the LINE OA monthly Messaging API quota.
+
+#### Company-aware LINE routing
+
+The current notification router does not use OA broadcast. Admins receive every movement through `LINE_ADMIN_TARGET_ID` (or through individually linked Admin accounts), while normal users receive only movements involving their own `Company_ID`.
+
+Required configuration:
+
+- `LINE_CHANNEL_ACCESS_TOKEN`
+- `LINE_CHANNEL_SECRET`
+- `LINE_ADMIN_TARGET_ID` (optional Admin group ID)
+- `NEXT_PUBLIC_LINE_OA_ADD_FRIEND_URL`
+
+Set the LINE Developers Webhook URL to `https://YOUR_DOMAIN/api/line/webhook`, click **Verify**, and enable **Use webhook**. Users can then generate a one-time code in TEMS profile settings and send it to the OA. The required `LINE_*` columns are added to the `Users` sheet automatically on first use. The older `LINE_OA_DELIVERY_MODE` setting is no longer used.
 
 Run the app with `npm run dev` on the mapped `X:` drive.
 
@@ -109,9 +120,9 @@ The app is already wired to use Google Sheets as its data source, so deployment 
    - `GOOGLE_PRIVATE_KEY`
    - `SHEET_ID` (set to `1O7UBSJiPKffZVG6isyTrDD1qUpPtvAQ5ZcUiogIzuf4`)
    - `SESSION_SECRET`
-   - `ALLOW_MOCK_AUTH=false`
    - `LINE_CHANNEL_ACCESS_TOKEN`
-   - `LINE_OA_DELIVERY_MODE=broadcast` (or `push` with `LINE_OA_TARGET_ID`)
+   - `LINE_CHANNEL_SECRET`
+   - `LINE_ADMIN_TARGET_ID`
    - optional SMS variables if you want OTP delivery to work in production.
 3. Deploy the project. The app will read the spreadsheet from the same shared Google Sheet automatically.
 

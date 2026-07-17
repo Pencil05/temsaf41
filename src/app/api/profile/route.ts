@@ -10,7 +10,7 @@ function isValidGmail(value: string) {
 export async function GET() {
   const user = readSessionValue((await cookies()).get(SESSION_COOKIE_NAME)?.value);
   if (!user) return NextResponse.json({ error: "กรุณาเข้าสู่ระบบใหม่" }, { status: 401 });
-  const profile = await getAccountById(user.userId) || { ...user, phone: "", gmail: "", profileImage: "" };
+  const profile = await getAccountById(user.userId) || { ...user, phone: "", gmail: "", profileImage: "", lineLinked: false, lineDisplayName: "", lineNotifyEnabled: false, lineLinkedAt: "" };
   return NextResponse.json(profile);
 }
 
@@ -44,4 +44,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "แก้ไขโปรไฟล์ไม่สำเร็จ" }, { status: 400 });
   }
 }
-

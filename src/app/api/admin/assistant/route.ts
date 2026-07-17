@@ -61,7 +61,7 @@ export async function POST(request: Request) {
       equipments: data.equipments.map(({ id, name, category, requirePlate }) => ({ id, name, category, requirePlate })),
       inventories: data.inventories.map(({ id, companyId, equipmentId, equipmentName, plateNumber, total, available, borrowed, broken }) => ({ id, companyId, equipmentId, equipmentName, plateNumber, total, available, borrowed, broken })),
       maintenance: data.maintenance.map(({ id, inventoryId, companyId, equipmentName, plateNumber, quantity, status }) => ({ id, inventoryId, companyId, equipmentName, plateNumber, quantity, status })),
-      activeBorrows: data.transactions.filter((item) => item.movementType === "borrow" && ["borrowed", "overdue"].includes(item.status.toLowerCase())).map(({ id, equipmentName, plateNumber, ownerCompanyId, borrowerCompanyId, outstandingQuantity, status }) => ({ id, equipmentName, plateNumber, ownerCompanyId, borrowerCompanyId, outstandingQuantity, status })),
+      activeBorrows: data.transactions.filter((item) => item.activeBorrow).map(({ id, equipmentName, plateNumber, ownerCompanyId, borrowerCompanyId, outstandingQuantity, status }) => ({ id, equipmentName, plateNumber, ownerCompanyId, borrowerCompanyId, outstandingQuantity, status })),
     };
     const systemInstruction = `คุณคือ AI ผู้ช่วยผู้ดูแลระบบ TEMS ตอบภาษาไทย กระชับ และต้องแม่นยำจากข้อมูล CONTEXT เท่านั้น
 ห้ามอ้างว่าดำเนินการแล้ว เพราะระบบจะดำเนินการหลังผู้ดูแลกดยืนยันอีกครั้ง

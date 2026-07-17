@@ -621,7 +621,9 @@ export async function submitBorrowRequest(user: SessionUser, input: BorrowReques
   await sendLineActivityNotification({
     kind: "borrow",
     actorName: receipt.borrowerName,
+    ownerCompanyId: user.companyId,
     ownerCompanyName: receipt.ownerCompanyName,
+    borrowerCompanyId: input.borrowerCompanyId,
     borrowerCompanyName: receipt.borrowerCompanyName,
     referenceId: receipt.txId,
     occurredAt: receipt.date,

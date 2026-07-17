@@ -9,7 +9,7 @@ export default async function UserLayout({ children }: { children: React.ReactNo
   const user = readSessionValue((await cookies()).get(SESSION_COOKIE_NAME)?.value);
   if (!user) redirect("/");
   if (user.role === "Admin") redirect("/admin/dashboard");
-  const profile = await getAccountById(user.userId) || { ...user, phone: "", gmail: "", profileImage: "" };
+  const profile = await getAccountById(user.userId) || { ...user, phone: "", gmail: "", profileImage: "", lineLinked: false, lineDisplayName: "", lineNotifyEnabled: false, lineLinkedAt: "" };
   const searchItems = await getGlobalEquipmentSearchItems();
   return <UserShell profile={profile} searchItems={searchItems}>{children}</UserShell>;
 }
