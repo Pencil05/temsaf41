@@ -87,7 +87,7 @@ function resolvedAuditDetails(raw: string, companyNames: Map<string, string>, in
   if (!raw) return "ไม่มีรายละเอียดเพิ่มเติม";
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
+    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มรายการเข้าคลัง", "batch-add-inventory": "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
     return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage"].includes(key) && !key.toLowerCase().includes("password")).map(([key, rawValue]) => {
       const value = String(rawValue || "-");
       if (key === "action") return `คำสั่ง: ${actionNames[value] || value}`;
@@ -355,6 +355,56 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       }
       target = `INVENTORY_BATCH:${uniqueIds.size}`;
       auditContext = { quantity: String(uniqueIds.size), equipmentName: changedNames.slice(0, 20).join(", ") };
+    } else if (action === "batch-add-inventory") {
+      const requestedItems = Array.isArray(input.items) ? input.items as Array<Record<string, unknown>> : [];
+      if (!requestedItems.length || requestedItems.length > 200) throw new Error("กรุณาเพิ่มรายการครั้งละ 1-200 รายการ");
+      const projectedExisting = new Map<number, { row: RecordRow; total: number; available: number }>();
+      const newRows = new Map<string, { id: string; companyId: string; companyName: string; equipmentId: string; plateNumber: string; total: number; equipmentName: string }>();
+      const serials = new Set<string>();
+      const changedNames: string[] = [];
+      for (const requested of requestedItems) {
+        const companyId = String(requested.companyId || "");
+        const equipmentId = String(requested.equipmentId || "");
+        const companyName = field(companies.rows.find(({ record }) => field(record, "Company_ID") === companyId)?.record || {}, "Company_Name");
+        const equipment = equipments.rows.find(({ record }) => field(record, "Equip_ID") === equipmentId);
+        if (!companyName) throw new Error("พบรายการที่ไม่มีกองร้อยปลายทาง");
+        if (!equipment) throw new Error("พบชนิดยุทโธปกรณ์ที่ไม่มีในบัญชีแม่");
+        const equipmentName = field(equipment.record, "Equip_Name");
+        const requirePlate = ["true", "1", "yes"].includes(field(equipment.record, "Require_Plate").toLowerCase());
+        const plateNumber = requirePlate ? String(requested.plateNumber || "").trim() : "";
+        const quantity = Math.floor(Number(requested.total));
+        if (!Number.isInteger(quantity) || quantity < 1 || (requirePlate && quantity !== 1)) throw new Error(`${equipmentName} ระบุจำนวนไม่ถูกต้อง`);
+        if (requirePlate && !plateNumber) throw new Error(`${equipmentName} ต้องระบุ Serial/ทะเบียน`);
+        const serialKey = `${equipmentId}:${plateNumber.toLowerCase()}`;
+        if (requirePlate) {
+          if (serials.has(serialKey) || inventories.rows.some(({ record }) => field(record, "Equip_ID") === equipmentId && field(record, "Plate_Number").toLowerCase() === plateNumber.toLowerCase())) throw new Error(`Serial/ทะเบียน ${plateNumber} ถูกใช้งานอยู่แล้ว`);
+          serials.add(serialKey);
+        }
+        const existing = inventories.rows.find(({ record }) => field(record, "Company_ID") === companyId && field(record, "Equip_ID") === equipmentId && field(record, "Plate_Number") === plateNumber && field(record, "Stock_Status").toLowerCase() !== "borrowed" && (!field(record, "Asset_Owner_Company_ID") || field(record, "Asset_Owner_Company_ID") === companyId));
+        if (existing) {
+          const projected = projectedExisting.get(existing.rowNumber) || { row: existing, total: number(existing.record, "Qty_Total"), available: number(existing.record, "Qty_Available") };
+          projected.total += quantity;
+          projected.available += quantity;
+          projectedExisting.set(existing.rowNumber, projected);
+        } else {
+          const key = requirePlate ? serialKey : `${companyId}:${equipmentId}`;
+          const pending = newRows.get(key);
+          if (pending) pending.total += quantity;
+          else newRows.set(key, { id: `INV-${randomUUID().slice(0, 8)}`, companyId, companyName, equipmentId, plateNumber, total: quantity, equipmentName });
+        }
+        changedNames.push(`${equipmentName} → ${companyName} +${quantity}`);
+      }
+      projectedExisting.forEach(({ row, total, available }) => updates.push(
+        cell(inventories, row.rowNumber, requireColumn(inventories, "Qty_Total"), total),
+        cell(inventories, row.rowNumber, requireColumn(inventories, "Qty_Available"), available),
+      ));
+      let inventoryRowNumber = Math.max(1, ...inventories.rows.map((row) => row.rowNumber)) + 1;
+      newRows.forEach((item) => {
+        updates.push({ range: `'${inventories.name}'!A${inventoryRowNumber}:${letter(inventories.headers.length - 1)}${inventoryRowNumber}`, values: [valuesFor(inventories, { Inv_ID: item.id, Company_ID: item.companyId, Company_Name: item.companyName, Asset_Owner_Company_ID: item.companyId, Stock_Status: "Owned", Equip_ID: item.equipmentId, Plate_Number: item.plateNumber, Qty_Total: item.total, Qty_Available: item.total, Qty_Borrowed: 0, Qty_Broken: 0 })] });
+        inventoryRowNumber += 1;
+      });
+      target = `INVENTORY_BATCH_ADD:${requestedItems.length}`;
+      auditContext = { quantity: String(requestedItems.length), equipmentName: changedNames.slice(0, 40).join(", ") };
     } else if (action === "save-inventory" || action === "add-inventory") {
       const adding = action === "add-inventory";
       if (!adding && !target) throw new Error("กรุณาเลือกรายการในคลังที่ต้องการจัดการ");
@@ -603,7 +653,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       const actionLabels: Record<string, string> = {
         "save-company": "บันทึกข้อมูลกองร้อย", "delete-company": "ลบกองร้อย", "save-user": "บันทึกผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน",
         "save-equipment": "บันทึกชนิดยุทโธปกรณ์", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์",
-        "save-inventory": "แก้ไขคลังยุทโธปกรณ์", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มยุทโธปกรณ์เข้าคลัง", "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์",
+        "save-inventory": "แก้ไขคลังยุทโธปกรณ์", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มยุทโธปกรณ์เข้าคลัง", "batch-add-inventory": "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์",
         "delete-inventory": "ลบรายการคลัง", "delete-transaction-history": "ล้างประวัติเบิกคืน",
       };
       lineNotification = { kind: "admin", actorName: [admin.rank, admin.firstName, admin.lastName].filter(Boolean).join(" ") || admin.email, ownerCompanyName: auditContext.companyName || "ส่วนกลาง", referenceId: target, occurredAt: new Date().toISOString(), note: actionLabels[action] || action, adminOnly: true, items: auditContext.equipmentName ? [{ name: auditContext.equipmentName, quantity: Number(auditContext.quantity) || 1, plateNumber: auditContext.plateNumber }] : [] };

@@ -5,6 +5,7 @@ import { getAdminData } from "@/lib/admin-service";
 import { readSessionValue, SESSION_COOKIE_NAME } from "@/lib/auth-session";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function AdminDashboardPage() {
   const user = readSessionValue((await cookies()).get(SESSION_COOKIE_NAME)?.value);

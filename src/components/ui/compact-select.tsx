@@ -88,7 +88,11 @@ export function CompactSelect({
       const target = event.target as Node;
       if (!buttonRef.current?.contains(target) && !(target instanceof Element && target.closest(`[data-select-menu="${CSS.escape(listboxId)}"]`))) setOpen(false);
     };
-    const closeOnScroll = () => setOpen(false);
+    const closeOnScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(`[data-select-menu="${CSS.escape(listboxId)}"]`)) return;
+      setOpen(false);
+    };
     const reposition = () => updatePosition();
     document.addEventListener("pointerdown", close);
     window.addEventListener("scroll", closeOnScroll, true);
@@ -149,6 +153,8 @@ export function CompactSelect({
           data-select-menu={listboxId}
           id={listboxId}
           role="listbox"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
           onKeyDown={handleKeys}
           className="fixed z-[220] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
           style={{ left: position.left, top: position.top, width: position.width }}
