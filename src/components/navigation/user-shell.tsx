@@ -281,6 +281,7 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
         </header>
 
         {children}
+        <footer className="tems-mobile-footer-spacer" aria-hidden="true" />
         <UserAiAssistant />
       </div>
     </div>

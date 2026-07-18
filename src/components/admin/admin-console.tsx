@@ -285,6 +285,7 @@ export function AdminConsole({ initialData, adminName }: { initialData: AdminDat
             </Section>
           )}
         </main>
+        <footer className="tems-mobile-footer-spacer" aria-hidden="true" />
       </div>
 
       {companyDetail && <CompanyDetail data={initialData} companyId={companyDetail} onClose={() => setCompanyDetail("")} onOpenInventory={openInventoryForCompany} onDelete={(company) => { setCompanyDetail(""); setDeleteCompanyItem(company); }} />}

@@ -415,6 +415,20 @@ html[data-theme="dark"] main button[class*="bg-white"] {
   transform-origin: center bottom;
 }
 
+.tems-mobile-footer-spacer {
+  display: block;
+  height: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+  min-height: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+  pointer-events: none;
+}
+
+@media (min-width: 640px) {
+  .tems-mobile-footer-spacer {
+    height: calc(2rem + env(safe-area-inset-bottom, 0px));
+    min-height: calc(2rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .popup-backdrop,
   .popup-panel {
