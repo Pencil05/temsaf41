@@ -17,7 +17,7 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BorrowInventoryItem,
   BorrowPageData,
@@ -29,6 +29,7 @@ import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { EquipmentImage } from "@/components/equipment/equipment-image";
 import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
+import { useUnsavedDraft } from "@/hooks/use-unsaved-draft";
 
 type Toast = { type: "success" | "error"; message: string } | null;
 type QuantityValue = number | "";
@@ -38,6 +39,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const receiptRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Record<string, QuantityValue>>({});
   const [equipmentQuery, setEquipmentQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const [borrowerCompanyId, setBorrowerCompanyId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [note, setNote] = useState("");
@@ -52,6 +54,24 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const [receipt, setReceipt] = useState<BorrowReceipt | null>(null);
   const [reviewReceipt, setReviewReceipt] = useState<BorrowReceipt | null>(null);
   const selfUse = borrowerCompanyId === data.ownerCompanyId;
+  const categories = useMemo(() => [...new Set(data.inventory.map((item) => item.category).filter(Boolean))].sort((first, second) => first.localeCompare(second, "th")), [data.inventory]);
+  const draftDirty = Object.keys(selected).length > 0 || Boolean(borrowerCompanyId || dueDate || note || evidenceImage);
+  const { clearDraft, confirmDiscard } = useUnsavedDraft({
+    storageKey: `tems-borrow-draft:${data.ownerCompanyId}`,
+    value: { selected, equipmentQuery, categoryFilter, borrowerCompanyId, dueDate, note, evidenceName, evidencePreview, evidenceImage },
+    dirty: draftDirty,
+    onRestore: (draft) => {
+      setSelected(draft.selected || {});
+      setEquipmentQuery(draft.equipmentQuery || "");
+      setCategoryFilter(draft.categoryFilter || "");
+      setBorrowerCompanyId(draft.borrowerCompanyId || "");
+      setDueDate(draft.dueDate || "");
+      setNote(draft.note || "");
+      setEvidenceName(draft.evidenceName || "");
+      setEvidencePreview(draft.evidencePreview || "");
+      setEvidenceImage(draft.evidenceImage || "");
+    },
+  });
   usePopupDismiss(Boolean(reviewReceipt), () => setReviewReceipt(null));
   usePopupDismiss(Boolean(receipt) && !downloadMenuOpen, () => setReceipt(null));
   usePopupDismiss(downloadMenuOpen, () => setDownloadMenuOpen(false));
@@ -66,9 +86,19 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   );
   const filteredInventory = useMemo(() => {
     const keyword = equipmentQuery.trim().toLocaleLowerCase("th");
-    const matches = keyword ? data.inventory.filter((item) => `${item.name} ${item.category} ${item.plateNumber || ""}`.toLocaleLowerCase("th").includes(keyword)) : data.inventory;
+    const matches = data.inventory.filter((item) => (!categoryFilter || item.category === categoryFilter) && (!keyword || `${item.name} ${item.category} ${item.plateNumber || ""}`.toLocaleLowerCase("th").includes(keyword)));
     return [...matches].sort((first, second) => first.stockType.localeCompare(second.stockType) || first.name.localeCompare(second.name, "th"));
-  }, [data.inventory, equipmentQuery]);
+  }, [categoryFilter, data.inventory, equipmentQuery]);
+
+  useEffect(() => {
+    const guardLinks = (event: MouseEvent) => {
+      const anchor = (event.target as Element | null)?.closest("a[href]");
+      if (!anchor || !draftDirty || confirmDiscard()) return;
+      event.preventDefault();
+    };
+    document.addEventListener("click", guardLinks, true);
+    return () => document.removeEventListener("click", guardLinks, true);
+  }, [confirmDiscard, draftDirty]);
 
   function showToast(type: "success" | "error", message: string) {
     setToast({ type, message });
@@ -218,6 +248,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
 
       setReceipt(payload.receipt);
       setReviewReceipt(null);
+      clearDraft();
       setSelected({});
       setEvidenceName("");
       setEvidencePreview("");
@@ -318,7 +349,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
               </span>
             </div>
 
-            <div className="relative mt-4"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input value={equipmentQuery} onChange={(event) => setEquipmentQuery(event.target.value)} placeholder="ค้นหาชื่อ หมวดหมู่ หรือทะเบียน..." className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-10 text-sm outline-none focus:border-blue-500" />{equipmentQuery && <button type="button" onClick={() => setEquipmentQuery("")} className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="size-4" /></button>}</div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_260px]"><div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input value={equipmentQuery} onChange={(event) => setEquipmentQuery(event.target.value)} placeholder="ค้นหาชื่อ หมวดหมู่ หรือทะเบียน..." className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-10 text-sm outline-none focus:border-blue-500" />{equipmentQuery && <button type="button" onClick={() => setEquipmentQuery("")} className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="size-4" /></button>}</div><CompactSelect value={categoryFilter} onChange={setCategoryFilter} placeholder="แสดงทุกหมวดหมู่" searchable options={[{ value: "", label: "แสดงทุกหมวดหมู่" }, ...categories.map((category) => ({ value: category, label: category }))]} /></div>
             <div className="mt-3 max-h-[32rem] space-y-3 overflow-y-auto overscroll-contain pr-1 bg-white">
               {filteredInventory.length ? (
                 filteredInventory.map((item) => {

@@ -328,14 +328,15 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       target = `CATEGORY:${category}`;
       auditContext = { equipmentName: category };
     } else if (action === "batch-adjust-inventory") {
-      const requested = Array.isArray(input.items) ? input.items as Array<{ id?: unknown; total?: unknown }> : [];
+      const requested = Array.isArray(input.items) ? input.items as Array<{ id?: unknown; total?: unknown; plateNumber?: unknown }> : [];
       if (!requested.length || requested.length > 200) throw new Error("กรุณาเลือกยุทโธปกรณ์ 1-200 รายการ");
       const uniqueIds = new Set<string>();
+      requested.forEach((item) => uniqueIds.add(String(item.id || "")));
+      if (uniqueIds.has("") || uniqueIds.size !== requested.length) throw new Error("พบรายการคลังซ้ำหรือไม่ถูกต้อง");
+      const requestedSerials = new Set<string>();
       const changedNames: string[] = [];
       for (const requestedItem of requested) {
         const inventoryId = String(requestedItem.id || "");
-        if (!inventoryId || uniqueIds.has(inventoryId)) throw new Error("พบรายการคลังซ้ำหรือไม่ถูกต้อง");
-        uniqueIds.add(inventoryId);
         const row = inventories.rows.find(({ record }) => field(record, "Inv_ID") === inventoryId);
         if (!row) throw new Error(`ไม่พบรายการคลัง ${inventoryId}`);
         const equipmentId = field(row.record, "Equip_ID");
@@ -347,11 +348,24 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
         const minimum = Math.max(1, borrowed + broken);
         if (!Number.isInteger(nextTotal) || nextTotal < minimum) throw new Error(`${field(equipment?.record || {}, "Equip_Name") || inventoryId} ต้องมีจำนวนไม่น้อยกว่า ${minimum}`);
         if (requirePlate && nextTotal !== 1) throw new Error(`${field(equipment?.record || {}, "Equip_Name") || inventoryId} เป็นรายการ Serial จึงต้องมีจำนวน 1`);
+        const currentPlateNumber = field(row.record, "Plate_Number");
+        const nextPlateNumber = requirePlate ? String(requestedItem.plateNumber ?? currentPlateNumber).trim() : "";
+        if (requirePlate && !nextPlateNumber) throw new Error(`${field(equipment?.record || {}, "Equip_Name") || inventoryId} ต้องระบุ Serial/ทะเบียน`);
+        if (requirePlate) {
+          const serialKey = `${equipmentId}:${nextPlateNumber.toLowerCase()}`;
+          if (requestedSerials.has(serialKey) || inventories.rows.some(({ record }) => !uniqueIds.has(field(record, "Inv_ID")) && field(record, "Equip_ID") === equipmentId && field(record, "Plate_Number").toLowerCase() === nextPlateNumber.toLowerCase())) throw new Error(`Serial/ทะเบียน ${nextPlateNumber} ถูกใช้งานอยู่แล้ว`);
+          requestedSerials.add(serialKey);
+          if (nextPlateNumber.toLowerCase() !== currentPlateNumber.toLowerCase()) {
+            const hasActiveMovement = transactionSource.rows.some(({ record }) => ["borrowed", "overdue"].includes(field(record, "Status").toLowerCase()) && field(record, "Transaction_Type").toLowerCase() !== "return" && [field(record, "Inv_ID"), field(record, "Destination_Inventory_ID", "Borrower_Inventory_ID")].includes(inventoryId));
+            if (borrowed > 0 || hasActiveMovement) throw new Error(`${field(equipment?.record || {}, "Equip_Name") || inventoryId} กำลังถูกยืม จึงยังแก้ Serial ไม่ได้`);
+            updates.push(cell(inventories, row.rowNumber, requireColumn(inventories, "Plate_Number"), nextPlateNumber));
+          }
+        }
         updates.push(
           cell(inventories, row.rowNumber, requireColumn(inventories, "Qty_Total"), nextTotal),
-          cell(inventories, row.rowNumber, requireColumn(inventories, "Qty_Available"), nextTotal - minimum),
+          cell(inventories, row.rowNumber, requireColumn(inventories, "Qty_Available"), nextTotal - borrowed - broken),
         );
-        changedNames.push(`${field(equipment?.record || {}, "Equip_Name") || inventoryId}: ${number(row.record, "Qty_Total")}→${nextTotal}`);
+        changedNames.push(`${field(equipment?.record || {}, "Equip_Name") || inventoryId}: ${number(row.record, "Qty_Total")}→${nextTotal}${requirePlate && nextPlateNumber !== currentPlateNumber ? ` · Serial ${currentPlateNumber}→${nextPlateNumber}` : ""}`);
       }
       target = `INVENTORY_BATCH:${uniqueIds.size}`;
       auditContext = { quantity: String(uniqueIds.size), equipmentName: changedNames.slice(0, 20).join(", ") };
