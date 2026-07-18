@@ -16,6 +16,7 @@ const pendingSheetRows = new Map<string, Promise<SheetRecord[]>>();
 export type DashboardCategory = {
   name: string;
   quantity: number;
+  icon: string;
 };
 
 export type DashboardActivity = {
@@ -253,12 +254,13 @@ export async function authenticateUser(email: string, password: string): Promise
 }
 
 export async function getUserDashboardData(user: SessionUser): Promise<UserDashboardData> {
-  const [companies, rawEquipments, inventories, transactions, maintenance] = await Promise.all([
+  const [companies, rawEquipments, inventories, transactions, maintenance, equipmentCategories] = await Promise.all([
     getSheetRows("Companies"),
     getSheetRows("Equipments"),
     getSheetRows("Inventories"),
     getSheetRows("Transactions"),
     getSheetRows("Maintenance"),
+    getSheetRows("Equipment_Categories"),
   ]);
   const masterEquipments = rawEquipments.length ? rawEquipments : await getSheetRows("Master_Equipments");
 
@@ -286,6 +288,10 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
       ] as const] : [];
     }),
   );
+  const categoryIconByName = new Map(equipmentCategories.filter((category) => !["false", "0", "deleted", "inactive"].includes(getField(category, "Is_Active", "Active", "Status").toLowerCase())).map((category) => [
+    getField(category, "Category_Name", "Category", "Name"),
+    getField(category, "Icon", "Icon_Name") || "Boxes",
+  ]));
   const quantityByCategory = new Map<string, number>();
   const borrowedQuantityByCategory = new Map<string, number>();
   const categoryNames = new Set<string>();
@@ -409,10 +415,11 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
   const categories = Array.from(categoryNames).map((name) => ({
     name,
     quantity: quantityByCategory.get(name) ?? 0,
+    icon: categoryIconByName.get(name) || "",
   }));
   const borrowedCategories = Array.from(borrowedQuantityByCategory.entries())
     .filter(([, quantity]) => quantity > 0)
-    .map(([name, quantity]) => ({ name, quantity }))
+    .map(([name, quantity]) => ({ name, quantity, icon: categoryIconByName.get(name) || "" }))
     .sort((a, b) => a.name.localeCompare(b.name, "th"));
 
   return {

@@ -2,18 +2,40 @@
 
 import {
   Activity,
+  Ambulance,
+  Anchor,
   ArrowRightLeft,
+  Axe,
+  Backpack,
+  BatteryCharging,
+  BellRing,
+  Binoculars,
+  Biohazard,
+  Bomb,
+  BowArrow,
   Boxes,
   Building2,
+  Cable,
+  Camera,
   CheckCircle2,
   ChevronDown,
+  CircleDot,
   ClipboardList,
+  Cog,
+  Compass,
   Copy,
+  Crosshair,
+  Cpu,
   Database,
   Download,
   FileImage,
   FileText,
   Filter,
+  Flag,
+  Flame,
+  Fuel,
+  Hammer,
+  HardHat,
   Eye,
   LogOut,
   Menu,
@@ -26,15 +48,39 @@ import {
   Users,
   Wrench,
   Trash2,
+  Truck,
   Plane,
   Shield,
   GraduationCap,
   Hash,
   LifeBuoy,
   ListChecks,
+  Map as MapIcon,
   Minus,
+  Package,
   Plus,
+  Radio,
+  RadioTower,
+  Radar,
+  Rocket,
+  SatelliteDish,
+  Shell,
+  Ship,
+  Shirt,
+  Siren,
+  Sword,
+  Swords,
+  Target,
+  Telescope,
+  TentTree,
+  TowerControl,
+  Utensils,
+  Warehouse,
   X,
+  Zap,
+  Medal,
+  BriefcaseMedical,
+  Drone,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -50,7 +96,7 @@ import { useUnsavedDraft } from "@/hooks/use-unsaved-draft";
 import type { AdminAuditLog, AdminData, AdminMaintenance, AdminTransaction } from "@/lib/admin-service";
 
 type Tab = "overview" | "users" | "equipment" | "inventory" | "transactions" | "maintenance" | "logs";
-type Modal = { type: "company" | "user" | "equipment" | "inventory" | "inventory-add" | "inventory-batch-add" | "transfer"; item?: Record<string, unknown> } | null;
+type Modal = { type: "company" | "user" | "equipment" | "category" | "inventory" | "inventory-add" | "inventory-batch-add" | "transfer"; item?: Record<string, unknown> } | null;
 
 const tabs: Array<{ id: Tab; label: string; Icon: typeof Boxes }> = [
   { id: "overview", label: "ภาพรวม", Icon: Boxes },
@@ -82,6 +128,7 @@ export function AdminConsole({ initialData, adminName }: { initialData: AdminDat
   const [maintenanceReceipt, setMaintenanceReceipt] = useState<AdminMaintenance | null>(null);
   const [auditDetail, setAuditDetail] = useState<AdminAuditLog | null>(null);
   const [equipmentSummary, setEquipmentSummary] = useState(false);
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [deleteEquipmentCategory, setDeleteEquipmentCategory] = useState("");
   const [borrowedSummary, setBorrowedSummary] = useState(false);
   const [returnTransactionItem, setReturnTransactionItem] = useState<AdminTransaction | null>(null);
@@ -99,6 +146,7 @@ export function AdminConsole({ initialData, adminName }: { initialData: AdminDat
   usePopupDismiss(Boolean(deleteCompanyItem), () => setDeleteCompanyItem(null));
   usePopupDismiss(Boolean(auditDetail), () => setAuditDetail(null));
   usePopupDismiss(equipmentSummary, () => setEquipmentSummary(false));
+  usePopupDismiss(categoryManagerOpen && !modal, () => setCategoryManagerOpen(false));
   usePopupDismiss(Boolean(deleteEquipmentCategory), () => setDeleteEquipmentCategory(""));
   usePopupDismiss(borrowedSummary && !returnTransactionItem && !receipt, () => setBorrowedSummary(false));
   usePopupDismiss(Boolean(returnTransactionItem), () => setReturnTransactionItem(null));
@@ -197,7 +245,7 @@ export function AdminConsole({ initialData, adminName }: { initialData: AdminDat
           {tab === "overview" && <CompanyGrid data={initialData} onSelect={setCompanyDetail} onAdd={() => setModal({ type: "company" })} />}
           {tab === "overview" && <Overview data={initialData} onEquipment={() => setEquipmentSummary(true)} onUsers={() => setTab("users")} onBorrowed={() => setBorrowedSummary(true)} onMaintenance={() => setTab("maintenance")} />}
           {tab === "users" && <Section title={`ผู้ใช้ทั้งหมด ${initialData.users.length.toLocaleString("th-TH")} คน`} action="เพิ่มผู้ใช้" onAdd={() => setModal({ type: "user" })}><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filtered.users.map((item) => <Card key={item.id} onClick={() => setModal({ type: "user", item: item as unknown as Record<string, unknown> })} title={`${item.rank} ${item.firstName} ${item.lastName}`} detail={`${item.role} · ${item.companyName}`} meta={`${item.email} · ${item.phone || "ไม่มีเบอร์"}`} />)}</div></Section>}
-          {tab === "equipment" && <Section title="บัญชียุทโธปกรณ์แม่" action="เพิ่มชนิดยุทโธปกรณ์" onAdd={() => setModal({ type: "equipment" })}><EquipmentCatalog items={initialData.equipments.filter((item) => match(item.name, item.category))} onEdit={(item) => setModal({ type: "equipment", item: item as unknown as Record<string, unknown> })} onDeleteCategory={setDeleteEquipmentCategory} /></Section>}
+          {tab === "equipment" && <Section title="บัญชียุทโธปกรณ์แม่"><EquipmentCatalog items={initialData.equipments.filter((item) => match(item.name, item.category))} onAdd={() => setModal({ type: "equipment" })} onManageCategories={() => setCategoryManagerOpen(true)} onEdit={(item) => setModal({ type: "equipment", item: item as unknown as Record<string, unknown> })} /></Section>}
 
           {tab === "inventory" && (
             <Section title={inventoryCompany ? `คลัง ${initialData.companies.find((item) => item.id === inventoryCompany)?.name}` : "คลังทุกกองร้อย"}>
@@ -243,6 +291,7 @@ export function AdminConsole({ initialData, adminName }: { initialData: AdminDat
       {maintenanceReceipt && <AdminMaintenanceReceiptModal maintenance={maintenanceReceipt} onClose={() => setMaintenanceReceipt(null)} />}
       {auditDetail && <AuditDetailModal log={auditDetail} onClose={() => setAuditDetail(null)} />}
       {equipmentSummary && <EquipmentSummaryModal data={initialData} onClose={() => setEquipmentSummary(false)} />}
+      {categoryManagerOpen && <CategoryManagerModal categories={initialData.categories} equipments={initialData.equipments} onClose={() => setCategoryManagerOpen(false)} onAdd={() => setModal({ type: "category" })} onEdit={(item) => setModal({ type: "category", item: item as unknown as Record<string, unknown> })} onDelete={setDeleteEquipmentCategory} />}
       {deleteEquipmentCategory && <ConfirmCategoryDeleteModal category={deleteEquipmentCategory} count={initialData.equipments.filter((item) => item.category === deleteEquipmentCategory).length} onClose={() => setDeleteEquipmentCategory("")} onConfirm={() => { const category = deleteEquipmentCategory; setDeleteEquipmentCategory(""); mutate({ action: "delete-equipment-category", category }); }} />}
       {borrowedSummary && <BorrowedSummaryModal data={initialData} onClose={() => setBorrowedSummary(false)} onSelect={setReceipt} onReturn={setReturnTransactionItem} />}
       {receipt && <AdminReceiptModal transaction={receipt} onClose={() => setReceipt(null)} />}
@@ -416,7 +465,7 @@ function groupRecordsByDate<T>(items: T[], getDate: (item: T) => string) {
 }
 
 function maintenanceStatus(status: string) { return ({ reported: "แจ้งเสีย", inspecting: "กำลังตรวจสอบ", repairing: "กำลังดำเนินการ", completed: "ซ่อมเสร็จแล้ว", disposed: "จำหน่ายแล้ว" } as Record<string, string>)[status.toLowerCase()] || status; }
-function auditAction(action: string) { const key = action.toLowerCase().replace(/-/g, "_").replace(/^admin_/, ""); return ({ borrow: "เบิกยุทโธปกรณ์", return: "คืนยุทโธปกรณ์", return_transaction: "คืนยุทโธปกรณ์", delete_transaction_history: "ล้างประวัติเบิก / คืน", defect: "แจ้งยุทโธปกรณ์ชำรุด", report_defect: "แจ้งยุทโธปกรณ์ชำรุด", maintenance_status: "อัปเดตสถานะซ่อม", dispose_maintenance: "จำหน่ายยุทโธปกรณ์", transfer_inventory: "เคลื่อนย้ายยุทโธปกรณ์", save_user: "จัดการผู้ใช้งาน", delete_user: "ลบผู้ใช้งาน", delete_company: "ลบกองร้อย", save_equipment: "จัดการบัญชียุทโธปกรณ์", delete_equipment: "ลบชนิดยุทโธปกรณ์", delete_equipment_category: "ลบหมวดหมู่ยุทโธปกรณ์", save_inventory: "ปรับปรุงคลัง", batch_adjust_inventory: "ปรับจำนวนยุทโธปกรณ์หลายรายการ", add_inventory: "เพิ่มรายการเข้าคลัง", batch_add_inventory: "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", delete_inventory: "ลบรายการออกจากคลัง", save_company: "จัดการกองร้อย" } as Record<string, string>)[key] || action || "ไม่ระบุการดำเนินการ"; }
+function auditAction(action: string) { const key = action.toLowerCase().replace(/-/g, "_").replace(/^admin_/, ""); return ({ borrow: "เบิกยุทโธปกรณ์", return: "คืนยุทโธปกรณ์", return_transaction: "คืนยุทโธปกรณ์", delete_transaction_history: "ล้างประวัติเบิก / คืน", defect: "แจ้งยุทโธปกรณ์ชำรุด", report_defect: "แจ้งยุทโธปกรณ์ชำรุด", maintenance_status: "อัปเดตสถานะซ่อม", dispose_maintenance: "จำหน่ายยุทโธปกรณ์", transfer_inventory: "เคลื่อนย้ายยุทโธปกรณ์", save_user: "จัดการผู้ใช้งาน", delete_user: "ลบผู้ใช้งาน", delete_company: "ลบกองร้อย", save_equipment: "จัดการบัญชียุทโธปกรณ์", save_category: "จัดการหมวดหมู่ยุทโธปกรณ์", delete_equipment: "ลบชนิดยุทโธปกรณ์", delete_equipment_category: "ลบหมวดหมู่ยุทโธปกรณ์", save_inventory: "ปรับปรุงคลัง", batch_adjust_inventory: "ปรับจำนวนยุทโธปกรณ์หลายรายการ", add_inventory: "เพิ่มรายการเข้าคลัง", batch_add_inventory: "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", delete_inventory: "ลบรายการออกจากคลัง", save_company: "จัดการกองร้อย" } as Record<string, string>)[key] || action || "ไม่ระบุการดำเนินการ"; }
 function companyIcon(name: string) { const normalized = name.toLocaleLowerCase("th"); if (normalized.includes("ต่อสู้อากาศ")) return Shield; if (normalized.includes("สนับสนุน")) return LifeBuoy; if (normalized.includes("อากาศยาน")) return Plane; if (normalized.includes("รักษาการณ์")) return ShieldCheck; if (normalized.includes("ฝึก") || normalized.includes("ทหารใหม่")) return GraduationCap; return Building2; }
 
 function EditModal({ modal, data, onClose, onSave }: { modal: NonNullable<Modal>; data: AdminData; onClose: () => void; onSave: (payload: Record<string, unknown>) => void }) {
@@ -434,22 +483,95 @@ function EditModal({ modal, data, onClose, onSave }: { modal: NonNullable<Modal>
   const captureDraft = (form: HTMLFormElement) => { setDirty(true); window.queueMicrotask(() => setDraftValues(Object.fromEntries([...new FormData(form).entries()].map(([key, value]) => [key, String(value)])))); };
   const submit = (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); clearDraft(); onSave(Object.fromEntries(new FormData(event.currentTarget).entries())); };
   const action = modal.type === "transfer" ? "transfer-inventory" : modal.type === "inventory-add" ? "add-inventory" : `save-${modal.type}`;
-  return <div className="popup-backdrop fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/50 sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><form onSubmit={submit} onInputCapture={(event) => captureDraft(event.currentTarget)} onChangeCapture={(event) => captureDraft(event.currentTarget)} onClickCapture={(event) => { if ((event.target as Element).closest('[role="option"]')) captureDraft(event.currentTarget); }} className="popup-panel max-h-[92dvh] w-full max-w-xl overflow-y-auto rounded-t-[30px] bg-white p-5 sm:rounded-[30px]"><div className="flex justify-between"><div><p className="text-xs font-bold uppercase tracking-wider text-blue-600">Admin Action</p><h2 className="text-xl font-bold">{modal.type === "transfer" ? "เคลื่อนย้ายยุทโธปกรณ์ระหว่างกองร้อย" : modal.type === "inventory-add" ? "เพิ่มรายการเข้าคลัง" : modal.type === "inventory" ? "จัดการอาวุธในคลัง" : "จัดการข้อมูล"}</h2></div><button type="button" onClick={close}><X /></button></div><input type="hidden" name="action" value={action} />{!["inventory", "inventory-add", "transfer"].includes(modal.type) && <input type="hidden" name="id" value={String(item.id || "")} />}<div className="mt-5 grid gap-4 sm:grid-cols-2">
+  return <div className="popup-backdrop fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/50 sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><form onSubmit={submit} onInputCapture={(event) => captureDraft(event.currentTarget)} onChangeCapture={(event) => captureDraft(event.currentTarget)} onClickCapture={(event) => { if ((event.target as Element).closest('[role="option"], [data-form-value]')) captureDraft(event.currentTarget); }} className="popup-panel max-h-[92dvh] w-full max-w-xl overflow-y-auto rounded-t-[30px] bg-white p-5 sm:rounded-[30px]"><div className="flex justify-between"><div><p className="text-xs font-bold uppercase tracking-wider text-blue-600">Admin Action</p><h2 className="text-xl font-bold">{modal.type === "transfer" ? "เคลื่อนย้ายยุทโธปกรณ์ระหว่างกองร้อย" : modal.type === "inventory-add" ? "เพิ่มรายการเข้าคลัง" : modal.type === "inventory" ? "จัดการอาวุธในคลัง" : modal.type === "category" ? (item.id ? "แก้ไขหมวดหมู่ยุทโธปกรณ์" : "เพิ่มหมวดหมู่ยุทโธปกรณ์") : modal.type === "equipment" ? (item.id ? "แก้ไขยุทโธปกรณ์" : "เพิ่มยุทโธปกรณ์") : "จัดการข้อมูล"}</h2></div><button type="button" onClick={close}><X /></button></div><input type="hidden" name="action" value={action} />{!["inventory", "inventory-add", "transfer"].includes(modal.type) && <input type="hidden" name="id" value={String(item.id || "")} />}<div className="mt-5 grid gap-4 sm:grid-cols-2">
     {modal.type === "company" && <Input name="name" label="ชื่อกองร้อย" value={item.name} />}
     {modal.type === "user" && <><Select name="companyId" label="กองร้อย" value={item.companyId} options={data.companies.map((company) => [company.id, company.name])} /><Select name="role" label="สิทธิ์" value={item.role || "User"} options={[["User", "User"], ["Admin", "Admin"]]} /><Input name="rank" label="ยศ" value={item.rank} /><Input name="firstName" label="ชื่อ" value={item.firstName} /><Input name="lastName" label="นามสกุล" value={item.lastName} /><Input name="email" label="อีเมลเข้าสู่ระบบ" value={item.email} type="email" /><Input name="phone" label="เบอร์โทร" value={item.phone} optional /><Input name="gmail" label="Gmail กู้คืน" value={item.gmail} type="email" optional /><Input name="password" label={item.id ? "รหัสผ่านใหม่ (เว้นว่างได้)" : "รหัสผ่านเริ่มต้น"} type="password" optional={Boolean(item.id)} /></>}
-    {modal.type === "equipment" && <EquipmentEditor item={item} categories={[...new Set(data.equipments.map((equipment) => equipment.category).filter(Boolean))].sort((first, second) => first.localeCompare(second, "th"))} />}
+    {modal.type === "equipment" && <EquipmentEditor item={item} categories={data.categories} />}
+    {modal.type === "category" && <CategoryEditor item={item} />}
     {modal.type === "inventory" && <InventoryEditor data={data} initialCompanyId={String(item.companyId || "")} initialInventoryId={String(item.id || "")} />}
     {modal.type === "inventory-add" && <InventoryAddEditor data={data} initialCompanyId={String(item.companyId || "")} />}
     {modal.type === "transfer" && <TransferEditor data={data} />}
   </div>{modal.type === "user" && Boolean(item.id) && <button type="button" onClick={() => { if (window.confirm(`ยืนยันลบผู้ใช้งาน ${String(item.firstName || "")} ${String(item.lastName || "")}?`)) onSave({ action: "delete-user", id: item.id }); }} className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-full border border-red-200 bg-red-50 font-bold text-red-700 transition hover:bg-red-100"><Trash2 className="size-4" />ลบผู้ใช้งาน</button>}{modal.type === "equipment" && Boolean(item.id) && <button type="button" onClick={() => { if (window.confirm(`ยืนยันลบยุทโธปกรณ์ ${String(item.name || "")}?`)) onSave({ action: "delete-equipment", id: item.id }); }} className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-full border border-red-200 bg-red-50 font-bold text-red-700 transition hover:bg-red-100"><Trash2 className="size-4" />ลบชนิดยุทโธปกรณ์</button>}<button className={`${(["user", "equipment"].includes(modal.type) && Boolean(item.id)) ? "mt-3" : "mt-6"} h-12 w-full rounded-full bg-blue-600 font-bold text-white`}>ยืนยันและบันทึก Audit Log</button></form></div>;
 }
 
-function EquipmentCatalog({ items, onEdit, onDeleteCategory }: { items: AdminData["equipments"]; onEdit: (item: AdminData["equipments"][number]) => void; onDeleteCategory: (category: string) => void }) {
+function RifleIcon({ className = "size-5" }: { className?: string }) {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true"><path d="M3 9h9l3-2h4l2 2-2 2-4-1-3 2H8l-2 6H4l1-6H3Z" /><path d="M12 9V6h2v2" /><path d="M8 12l2 3" /></svg>;
+}
+
+const categoryIconOptions = [
+  { name: "Rifle", label: "ปืน", Icon: RifleIcon },
+  { name: "Boxes", label: "กล่องยุทโธปกรณ์", Icon: Boxes },
+  { name: "Package", label: "พัสดุ", Icon: Package },
+  { name: "Crosshair", label: "เป้า/อาวุธ", Icon: Crosshair },
+  { name: "Target", label: "เป้าหมาย", Icon: Target },
+  { name: "Sword", label: "อาวุธ", Icon: Sword },
+  { name: "Bomb", label: "วัตถุระเบิด", Icon: Bomb },
+  { name: "CircleDot", label: "กระสุน", Icon: CircleDot },
+  { name: "Shield", label: "โล่/ป้องกัน", Icon: Shield },
+  { name: "HardHat", label: "หมวกป้องกัน", Icon: HardHat },
+  { name: "Shirt", label: "เครื่องแต่งกาย", Icon: Shirt },
+  { name: "Backpack", label: "สัมภาระ", Icon: Backpack },
+  { name: "Truck", label: "ยานพาหนะ", Icon: Truck },
+  { name: "Ambulance", label: "รถพยาบาล", Icon: Ambulance },
+  { name: "Fuel", label: "เชื้อเพลิง", Icon: Fuel },
+  { name: "Plane", label: "อากาศยาน", Icon: Plane },
+  { name: "Wrench", label: "เครื่องมือ", Icon: Wrench },
+  { name: "Hammer", label: "งานช่าง", Icon: Hammer },
+  { name: "Cog", label: "เครื่องจักร", Icon: Cog },
+  { name: "Database", label: "คลัง", Icon: Database },
+  { name: "ClipboardList", label: "รายการ", Icon: ClipboardList },
+  { name: "LifeBuoy", label: "สนับสนุน", Icon: LifeBuoy },
+  { name: "GraduationCap", label: "ฝึกศึกษา", Icon: GraduationCap },
+  { name: "Radio", label: "วิทยุสื่อสาร", Icon: Radio },
+  { name: "Radar", label: "เรดาร์", Icon: Radar },
+  { name: "SatelliteDish", label: "ดาวเทียม", Icon: SatelliteDish },
+  { name: "BellRing", label: "สัญญาณเตือน", Icon: BellRing },
+  { name: "Siren", label: "ไซเรน", Icon: Siren },
+  { name: "Binoculars", label: "ตรวจการณ์", Icon: Binoculars },
+  { name: "Camera", label: "กล้อง", Icon: Camera },
+  { name: "Compass", label: "นำทาง", Icon: Compass },
+  { name: "Map", label: "แผนที่", Icon: MapIcon },
+  { name: "Cpu", label: "อิเล็กทรอนิกส์", Icon: Cpu },
+  { name: "BatteryCharging", label: "พลังงาน", Icon: BatteryCharging },
+  { name: "Cable", label: "สายและอุปกรณ์", Icon: Cable },
+  { name: "Zap", label: "ไฟฟ้า", Icon: Zap },
+  { name: "Flame", label: "เชื้อเพลิง/เพลิง", Icon: Flame },
+  { name: "TentTree", label: "สนาม/ที่พัก", Icon: TentTree },
+  { name: "Utensils", label: "อาหาร", Icon: Utensils },
+  { name: "BowArrow", label: "ธนู", Icon: BowArrow },
+  { name: "Swords", label: "อาวุธประชิด", Icon: Swords },
+  { name: "Axe", label: "ขวาน", Icon: Axe },
+  { name: "Shell", label: "เปลือก/กระสุน", Icon: Shell },
+  { name: "Telescope", label: "กล้องส่องทางไกล", Icon: Telescope },
+  { name: "Drone", label: "โดรน", Icon: Drone },
+  { name: "Rocket", label: "จรวด", Icon: Rocket },
+  { name: "TowerControl", label: "ควบคุมการบิน", Icon: TowerControl },
+  { name: "RadioTower", label: "หอสื่อสาร", Icon: RadioTower },
+  { name: "Ship", label: "เรือ", Icon: Ship },
+  { name: "Anchor", label: "งานทางน้ำ", Icon: Anchor },
+  { name: "Warehouse", label: "อาคารคลัง", Icon: Warehouse },
+  { name: "BriefcaseMedical", label: "เวชภัณฑ์", Icon: BriefcaseMedical },
+  { name: "Biohazard", label: "สารอันตราย", Icon: Biohazard },
+  { name: "Flag", label: "หน่วย/ธง", Icon: Flag },
+  { name: "Medal", label: "เครื่องหมาย", Icon: Medal },
+];
+
+function CategoryIconPreview({ name, className = "size-5" }: { name: string; className?: string }) {
+  const Icon = categoryIconOptions.find((item) => item.name === name)?.Icon || Boxes;
+  return <Icon className={className} />;
+}
+
+function CategoryManagerModal({ categories, equipments, onClose, onAdd, onEdit, onDelete }: { categories: AdminData["categories"]; equipments: AdminData["equipments"]; onClose: () => void; onAdd: () => void; onEdit: (item: AdminData["categories"][number]) => void; onDelete: (name: string) => void }) {
+  return <div className="popup-backdrop fixed inset-0 z-[95] flex items-end justify-center bg-slate-950/55 sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="popup-panel flex max-h-[92dvh] w-full max-w-5xl flex-col overflow-hidden rounded-t-[30px] bg-slate-50 sm:rounded-[30px]"><div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white p-5"><div><p className="text-xs font-bold uppercase tracking-wider text-cyan-700">Equipment Categories</p><h2 className="mt-1 text-xl font-bold">เพิ่ม/จัดการหมวดหมู่</h2><p className="mt-1 text-sm text-slate-500">เพิ่มหมวดหมู่ใหม่ หรือเลือกหมวดหมู่เดิมเพื่อแก้ชื่อและไอคอน</p></div><button type="button" onClick={onClose} className="grid size-10 shrink-0 place-items-center rounded-xl bg-slate-100 transition hover:bg-slate-200"><X className="size-5" /></button></div><div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><button type="button" onClick={onAdd} className="mb-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-cyan-300 bg-cyan-50 font-bold text-cyan-800 transition hover:bg-cyan-100 active:scale-[0.99]"><Plus className="size-5" />เพิ่มหมวดหมู่ใหม่</button><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{categories.map((category) => { const count = equipments.filter((item) => item.category === category.name).length; return <div key={category.name} className="group flex items-center gap-3 rounded-2xl border border-cyan-200 bg-white p-3 shadow-sm transition hover:border-cyan-400 hover:shadow-md"><button type="button" onClick={() => onEdit(category)} className="flex min-w-0 flex-1 items-center gap-3 text-left"><span className="grid size-12 shrink-0 place-items-center rounded-xl bg-cyan-100 text-cyan-700 transition group-hover:bg-cyan-600 group-hover:text-white"><CategoryIconPreview name={category.icon} /></span><span className="min-w-0 flex-1"><span className="block truncate font-bold">{category.name}</span><span className="mt-0.5 block text-xs text-slate-500">{count.toLocaleString("th-TH")} ชนิดยุทโธปกรณ์</span></span><Settings className="size-4 shrink-0 text-blue-500" /></button><button type="button" onClick={() => onDelete(category.name)} className="grid size-9 shrink-0 place-items-center rounded-lg text-red-500 transition hover:bg-red-50" aria-label={`ลบหมวดหมู่ ${category.name}`}><Trash2 className="size-4" /></button></div>; })}</div>{!categories.length && <Empty text="ยังไม่มีหมวดหมู่ยุทโธปกรณ์" />}</div></div></div>;
+}
+
+function EquipmentCatalog({ items, onAdd, onManageCategories, onEdit }: { items: AdminData["equipments"]; onAdd: () => void; onManageCategories: () => void; onEdit: (item: AdminData["equipments"][number]) => void }) {
   const [selectedCategory, setSelectedCategory] = useState("");
   const categories = [...new Set(items.map((item) => item.category).filter(Boolean))].sort((first, second) => first.localeCompare(second, "th"));
   const activeCategory = categories.includes(selectedCategory) ? selectedCategory : "";
   const filteredItems = activeCategory ? items.filter((item) => item.category === activeCategory) : items;
-  return <div><div className="-mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-2 sm:mx-0 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:px-0"><button type="button" onClick={() => setSelectedCategory("")} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition active:scale-95 sm:px-4 sm:py-2 sm:text-sm ${!activeCategory ? "border-blue-600 bg-blue-600 text-white shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700"}`}>ทั้งหมด <span className="ml-1 opacity-75">{items.length}</span></button>{categories.map((category) => { const active = activeCategory === category; const count = items.filter((item) => item.category === category).length; return <span key={category} className={`inline-flex shrink-0 items-center overflow-hidden rounded-full border text-xs font-semibold transition sm:text-sm ${active ? "border-blue-600 bg-blue-600 text-white shadow-sm" : "border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-400"}`}><button type="button" onClick={() => setSelectedCategory(active ? "" : category)} className="px-2.5 py-1.5 text-left active:scale-95 sm:px-3 sm:py-2">{category} <span className="ml-1 opacity-70">{count}</span></button><button type="button" onClick={() => onDeleteCategory(category)} className={`grid h-8 w-8 place-items-center border-l transition sm:h-9 sm:w-9 ${active ? "border-blue-400 text-white hover:bg-red-500" : "border-blue-200 text-red-600 hover:bg-red-100"}`} title={`ลบหมวดหมู่ ${category}`} aria-label={`ลบหมวดหมู่ ${category}`}><Trash2 className="size-3 sm:size-3.5" /></button></span>; })}</div><p className="mb-3 text-xs text-slate-500 sm:text-sm">แสดง {filteredItems.length.toLocaleString("th-TH")} จาก {items.length.toLocaleString("th-TH")} ชนิด</p><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{filteredItems.map((item) => <button key={item.id} type="button" onClick={() => onEdit(item)} className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-md transition hover:border-blue-300 active:scale-[0.99]"><span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 p-1"><Image src={item.picture} alt={item.name} width={96} height={96} unoptimized className="size-full object-contain" /></span><span className="min-w-0"><span className="block truncate font-bold">{item.name}</span><span className="mt-1 block text-sm text-blue-600">{item.category}</span><span className="mt-2 block text-xs text-slate-500">{item.requirePlate ? "แยกรายคัน/ทะเบียน" : "นับตามจำนวน"}</span></span></button>)}</div>{!filteredItems.length && <Empty text="ไม่พบยุทโธปกรณ์ในหมวดหมู่นี้" />}</div>;
+  const categoryOptions: CompactSelectOption[] = [{ value: "", label: "แสดงทั้งหมด", description: `${items.length.toLocaleString("th-TH")} ชนิดยุทโธปกรณ์` }, ...categories.map((category) => ({ value: category, label: category, description: `${items.filter((item) => item.category === category).length.toLocaleString("th-TH")} ชนิดยุทโธปกรณ์` }))];
+  return <div><div className="mb-4 grid gap-2 sm:grid-cols-2 lg:flex lg:items-center"><button type="button" onClick={onAdd} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.99] lg:w-auto"><PackagePlus className="size-4" />เพิ่มยุทโธปกรณ์</button><button type="button" onClick={onManageCategories} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-4 text-sm font-bold text-cyan-800 transition hover:bg-cyan-100 active:scale-[0.99] lg:w-auto"><Settings className="size-4" />เพิ่ม/จัดการหมวดหมู่</button><div className="min-w-0 sm:col-span-2 lg:ml-auto lg:w-80"><CompactSelect value={activeCategory} onChange={setSelectedCategory} options={categoryOptions} searchable placeholder="เลือกหมวดหมู่ยุทโธปกรณ์" /></div></div><p className="mb-3 text-xs text-slate-500 sm:text-sm">แสดง {filteredItems.length.toLocaleString("th-TH")} จาก {items.length.toLocaleString("th-TH")} ชนิด</p><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{filteredItems.map((item) => <button key={item.id} type="button" onClick={() => onEdit(item)} className="flex min-w-0 items-center gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-md transition hover:border-blue-300 active:scale-[0.99] sm:gap-4 sm:p-4"><span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 p-1 sm:size-16"><Image src={item.picture} alt={item.name} width={96} height={96} unoptimized className="size-full object-contain" /></span><span className="min-w-0 flex-1"><span className="block truncate font-bold">{item.name}</span><span className="mt-1 block truncate text-sm text-blue-600">{item.category}</span><span className="mt-2 block truncate text-xs text-slate-500">{item.requirePlate ? "แยกรายคัน/ทะเบียน" : "นับตามจำนวน"}</span></span></button>)}</div>{!filteredItems.length && <Empty text="ไม่พบยุทโธปกรณ์ในหมวดหมู่นี้" />}</div>;
 }
 
 function ConfirmCategoryDeleteModal({ category, count, onClose, onConfirm }: { category: string; count: number; onClose: () => void; onConfirm: () => void }) {
@@ -503,7 +625,12 @@ function InventoryBatchAddModal({ data, initialCompanyId, onClose, onConfirm }: 
   return <div className="popup-backdrop fixed inset-0 z-[125] flex items-end justify-center bg-slate-950/55 sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><div className="popup-panel flex max-h-[94dvh] w-full max-w-5xl flex-col overflow-hidden rounded-t-[30px] bg-white sm:rounded-[30px]"><div className="flex items-start justify-between border-b border-slate-200 p-5"><div><p className="text-xs font-bold uppercase tracking-wider text-blue-600">Batch Inventory</p><h2 className="mt-1 text-xl font-bold">เพิ่มยุทโธปกรณ์หลายรายการเข้าหลายกองร้อย</h2><p className="mt-1 text-sm text-slate-500">เพิ่ม คัดลอก และย่อแต่ละแถวได้ ระบบจะเก็บฉบับร่างไว้จนกว่าจะปิดแท็บ</p></div><button type="button" onClick={close} className="grid size-10 place-items-center rounded-xl bg-slate-100"><X className="size-5" /></button></div><div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4 sm:p-5">{rows.map((row, index) => { const equipment = data.equipments.find((item) => item.id === row.equipmentId); const isCollapsed = collapsed.has(row.key); return <section key={row.key} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className={`${isCollapsed ? "" : "mb-3"} flex items-center justify-between gap-3`}><button type="button" onClick={() => setCollapsed((current) => { const next = new Set(current); if (next.has(row.key)) next.delete(row.key); else next.add(row.key); return next; })} className="flex min-w-0 flex-1 items-center gap-2 text-left"><ChevronDown className={`size-4 shrink-0 transition ${isCollapsed ? "-rotate-90" : ""}`} /><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-blue-50 text-sm font-black text-blue-700">{index + 1}</span><span className="min-w-0"><span className="block truncate text-sm font-bold">{equipment?.name || "รายการเข้าคลัง"}</span><span className="block truncate text-xs text-slate-500">{data.companies.find((item) => item.id === row.companyId)?.name || "ยังไม่เลือกกองร้อย"}{row.plateNumber ? ` · ${row.plateNumber}` : ""}</span></span></button><div className="flex shrink-0"><button type="button" onClick={() => { const copy = { ...row, key: crypto.randomUUID(), plateNumber: equipment?.requirePlate ? "" : row.plateNumber }; setTouched(true); setRows((current) => { const position = current.findIndex((item) => item.key === row.key); const next = [...current]; next.splice(position + 1, 0, copy); return next; }); }} className="grid size-9 place-items-center rounded-lg text-blue-600 transition hover:bg-blue-50" aria-label="คัดลอกแถว"><Copy className="size-4" /></button><button type="button" disabled={rows.length === 1} onClick={() => { setTouched(true); setRows((current) => current.filter((item) => item.key !== row.key)); }} className="grid size-9 place-items-center rounded-lg text-red-500 transition hover:bg-red-50 disabled:opacity-30" aria-label="ลบแถว"><Trash2 className="size-4" /></button></div></div>{!isCollapsed && <><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1.3fr_150px_1fr]"><SelectControl label="กองร้อย" value={row.companyId} onChange={(companyId) => updateRow(row.key, { companyId })} options={companyOptions} /><SelectControl label="ชนิดยุทโธปกรณ์" value={row.equipmentId} onChange={(equipmentId) => { const next = data.equipments.find((item) => item.id === equipmentId); updateRow(row.key, { equipmentId, total: next?.requirePlate ? "1" : row.total || "1", plateNumber: next?.requirePlate ? row.plateNumber : "" }); }} options={equipmentOptions} /><label><span className="mb-1 block text-sm font-semibold">จำนวน</span><input type="number" min={1} max={equipment?.requirePlate ? 1 : undefined} value={equipment?.requirePlate ? "1" : row.total} disabled={equipment?.requirePlate} onChange={(event) => updateRow(row.key, { total: event.target.value })} onBlur={() => { if (!row.total) updateRow(row.key, { total: "1" }); }} className="h-11 w-full rounded-xl border border-slate-200 px-3 disabled:bg-slate-100" /></label><label><span className="mb-1 block text-sm font-semibold">Serial/ทะเบียน</span><input value={row.plateNumber} disabled={!equipment?.requirePlate} required={Boolean(equipment?.requirePlate)} onChange={(event) => updateRow(row.key, { plateNumber: event.target.value })} placeholder={equipment?.requirePlate ? "กรอกหมายเลข" : "ไม่ต้องระบุ"} className="h-11 w-full rounded-xl border border-slate-200 px-3 disabled:bg-slate-100 disabled:text-slate-400" /></label></div>{equipment && <div className="mt-3 flex items-center gap-3 rounded-xl bg-blue-50/70 p-2.5"><Image src={equipment.picture} alt={equipment.name} width={42} height={42} unoptimized className="size-11 rounded-lg bg-white object-contain p-1" /><div className="min-w-0"><p className="truncate text-sm font-bold text-slate-800">{equipment.name}</p><p className="text-xs text-slate-500">{equipment.category} · {equipment.requirePlate ? "แยกรายคัน/Serial" : "นับตามจำนวน"}</p></div></div>}</>}</section>; })}<button type="button" onClick={() => { setTouched(true); setRows((current) => [...current, createRow()]); }} className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50/50 font-bold text-blue-700 transition hover:bg-blue-50"><Plus className="size-5" />เพิ่มแถวรายการ</button>{error && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</p>}</div><div className="grid grid-cols-2 gap-3 border-t border-slate-200 bg-white p-4 sm:p-5"><button type="button" onClick={close} className="h-12 rounded-xl bg-slate-100 font-bold text-slate-600">ยกเลิก</button><button type="button" onClick={submit} className="h-12 rounded-xl bg-blue-600 font-bold text-white">ยืนยันเพิ่ม {rows.length} รายการ</button></div></div></div>;
 }
 
-function EquipmentEditor({ item, categories }: { item: Record<string, unknown>; categories: string[] }) {
+function CategoryEditor({ item }: { item: Record<string, unknown> }) {
+  const [icon, setIcon] = useState(String(item.icon || "Boxes"));
+  return <><Input name="name" label="ชื่อหมวดหมู่" value={item.name} /><input type="hidden" name="oldName" value={String(item.name || "")} /><input type="hidden" name="icon" value={icon} /><div className="sm:col-span-2"><span className="mb-2 block text-sm font-semibold">ไอคอนหมวดหมู่</span><div className="max-h-[48dvh] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-2"><div className="grid grid-cols-3 gap-2 sm:grid-cols-5">{categoryIconOptions.map(({ name, label, Icon }) => <button key={name} type="button" data-form-value onClick={() => setIcon(name)} className={`flex min-w-0 flex-col items-center gap-2 rounded-xl border p-3 text-center transition ${icon === name ? "border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-100" : "border-slate-200 bg-white text-slate-600 hover:border-blue-300"}`}><Icon className="size-5" /><span className="w-full truncate text-[11px] font-semibold">{label}</span></button>)}</div></div></div></>;
+}
+
+function EquipmentEditor({ item, categories }: { item: Record<string, unknown>; categories: AdminData["categories"] }) {
   const [picture, setPicture] = useState(String(item.picture || ""));
   const [preparing, setPreparing] = useState(false);
   async function upload(event: React.ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file) return; if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) { event.target.value = ""; return; } setPreparing(true); try { setPicture(await compressImageForSheet(file, { preserveFormat: true })); } finally { setPreparing(false); } }
@@ -562,7 +689,7 @@ function Summary({ label, value, tone }: { label: string; value: number; tone: s
 function Empty({ text }: { text: string }) { return <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">{text}</div>; }
 function DocumentCell({ id }: { id: string }) { return <td className="max-w-[150px] px-4 py-2.5"><span className="block overflow-x-auto whitespace-nowrap font-mono text-xs text-slate-500">{id || "-"}</span></td>; }
 function Input({ name, label, value = "", type = "text", optional = false }: { name: string; label: string; value?: unknown; type?: string; optional?: boolean }) { return <label className="block"><span className="mb-1 block text-sm font-semibold">{label}</span><input name={name} type={type} defaultValue={String(value)} required={!optional} min={type === "number" ? 0 : undefined} className="h-11 w-full rounded-xl border border-slate-200 px-3" /></label>; }
-function CategoryInput({ value = "", categories }: { value?: unknown; categories: string[] }) { return <label className="block"><span className="mb-1 block text-sm font-semibold">หมวดหมู่</span><input name="category" list="admin-equipment-categories" defaultValue={String(value)} required placeholder="เลือกหรือพิมพ์หมวดหมู่ใหม่" autoComplete="off" className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3" /><datalist id="admin-equipment-categories">{categories.map((category) => <option key={category} value={category} />)}</datalist><span className="mt-1 block text-xs text-slate-500">เลือกจากหมวดหมู่ปัจจุบัน หรือพิมพ์ชื่อหมวดหมู่ใหม่ได้</span></label>; }
+function CategoryInput({ value = "", categories }: { value?: unknown; categories: AdminData["categories"] }) { return <label className="block"><span className="mb-1 block text-sm font-semibold">หมวดหมู่</span><CompactSelect name="category" defaultValue={String(value || categories[0]?.name || "")} required searchable placeholder="เลือกหมวดหมู่" options={categories.map((category) => ({ value: category.name, label: category.name, description: category.icon }))} /><span className="mt-1 block text-xs text-slate-500">หากยังไม่มีหมวดหมู่ที่ต้องการ ให้กดปุ่ม “เพิ่มหมวดหมู่” ก่อน</span></label>; }
 function Select({ name, label, value = "", options }: { name: string; label: string; value?: unknown; options: Array<string[] | CompactSelectOption> }) { return <label className="min-w-0"><span className="mb-1 block text-sm font-semibold">{label}</span><CompactSelect name={name} defaultValue={String(value)} searchable options={normalizeOptions(options)} /></label>; }
 
 function normalizeOptions(options: Array<string[] | CompactSelectOption>): CompactSelectOption[] {

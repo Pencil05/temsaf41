@@ -5,7 +5,7 @@ import { readSessionValue, SESSION_COOKIE_NAME } from "@/lib/auth-session";
 
 const MODEL = "gemini-3.1-flash-lite";
 const allowedActions = new Set([
-  "save-company", "delete-company", "save-user", "delete-user", "save-equipment", "delete-equipment", "delete-equipment-category",
+  "save-company", "delete-company", "save-user", "delete-user", "save-equipment", "save-category", "delete-equipment", "delete-equipment-category",
   "add-inventory", "save-inventory", "transfer-inventory", "delete-inventory",
   "return-transaction", "delete-transaction-history", "report-defect", "maintenance-status", "dispose-maintenance",
 ]);
@@ -73,6 +73,7 @@ export async function POST(request: Request) {
 - save-user: {action,id?,companyId,role,rank,firstName,lastName,email,phone?,gmail?,password?}
 - delete-user: {action,id}
 - save-equipment: {action,id?,name,category,requirePlate}
+- save-category: {action,id?,name,icon} โดย icon เลือกจาก Rifle, Ambulance, Anchor, Axe, Backpack, BatteryCharging, BellRing, Binoculars, Biohazard, Bomb, BowArrow, Boxes, BriefcaseMedical, Cable, Camera, CircleDot, ClipboardList, Cog, Compass, Cpu, Crosshair, Database, Drone, Flag, Flame, Fuel, GraduationCap, Hammer, HardHat, LifeBuoy, Map, Medal, Package, Plane, Radio, RadioTower, Radar, Rocket, SatelliteDish, Shell, Shield, Ship, Shirt, Siren, Sword, Swords, Target, Telescope, TentTree, TowerControl, Truck, Utensils, Warehouse, Wrench, Zap
 - delete-equipment: {action,id}
 - delete-equipment-category: {action,category}
 - add-inventory: {action,companyId,equipmentId,plateNumber?,total}

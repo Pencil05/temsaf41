@@ -72,11 +72,22 @@ export type AdminData = {
   companies: Array<{ id: string; name: string; users: number; total: number; available: number; borrowed: number; broken: number; transactions: number }>;
   users: Array<{ id: string; companyId: string; companyName: string; role: string; rank: string; firstName: string; lastName: string; email: string; phone: string; gmail: string }>;
   equipments: Array<{ id: string; name: string; category: string; requirePlate: boolean; picture: string }>;
+  categories: Array<{ id: string; name: string; icon: string }>;
   inventories: Array<{ id: string; companyId: string; companyName: string; assetOwnerCompanyId: string; equipmentId: string; equipmentName: string; category: string; plateNumber: string; requirePlate: boolean; picture: string; total: number; available: number; borrowed: number; broken: number }>;
   transactions: AdminTransaction[];
   maintenance: AdminMaintenance[];
   logs: AdminAuditLog[];
 };
+
+const CATEGORY_HEADERS = ["Category_ID", "Category_Name", "Icon", "Is_Active"];
+
+function defaultCategoryIcon(name: string) {
+  const normalized = name.toLocaleLowerCase("th");
+  if (normalized.includes("ยานพาหนะ") || normalized.includes("vehicle")) return "Truck";
+  if (normalized.includes("สรรพาวุธ") || normalized.includes("กระสุน")) return "Shield";
+  if (normalized.includes("อาวุธ")) return "Crosshair";
+  return "Boxes";
+}
 
 const norm = (value: string) => value.toLowerCase().replace(/[\s_-]/g, "");
 const field = (record: Record<string, string>, ...names: string[]) => record[Object.keys(record).find((key) => names.some((name) => norm(key) === norm(name))) || ""] || "";
@@ -87,7 +98,7 @@ function resolvedAuditDetails(raw: string, companyNames: Map<string, string>, in
   if (!raw) return "ไม่มีรายละเอียดเพิ่มเติม";
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มรายการเข้าคลัง", "batch-add-inventory": "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
+    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มรายการเข้าคลัง", "batch-add-inventory": "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "save-category": "จัดการหมวดหมู่ยุทโธปกรณ์", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
     return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage"].includes(key) && !key.toLowerCase().includes("password")).map(([key, rawValue]) => {
       const value = String(rawValue || "-");
       if (key === "action") return `คำสั่ง: ${actionNames[value] || value}`;
@@ -135,6 +146,27 @@ async function equipmentTable() {
   try { return await table("Equipments"); } catch { return table("Master_Equipments"); }
 }
 
+async function optionalCategoryTable(): Promise<Table> {
+  try { return await table("Equipment_Categories"); }
+  catch { return { name: "Equipment_Categories", headers: CATEGORY_HEADERS, rows: [] }; }
+}
+
+async function ensureCategoryTable(): Promise<Table> {
+  const client = await sheets();
+  const metadata = await client.spreadsheets.get({ spreadsheetId: config().spreadsheetId, fields: "sheets.properties.title" });
+  const exists = metadata.data.sheets?.some((sheet) => sheet.properties?.title === "Equipment_Categories");
+  if (!exists) {
+    await client.spreadsheets.batchUpdate({ spreadsheetId: config().spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: "Equipment_Categories" } } }] } });
+    await client.spreadsheets.values.update({ spreadsheetId: config().spreadsheetId, range: "'Equipment_Categories'!A1:D1", valueInputOption: "RAW", requestBody: { values: [CATEGORY_HEADERS] } });
+  }
+  const result = await table("Equipment_Categories");
+  if (!result.headers.length) {
+    await client.spreadsheets.values.update({ spreadsheetId: config().spreadsheetId, range: "'Equipment_Categories'!A1:D1", valueInputOption: "RAW", requestBody: { values: [CATEGORY_HEADERS] } });
+    return { ...result, headers: CATEGORY_HEADERS };
+  }
+  return result;
+}
+
 function requireColumn(sheet: Table, ...names: string[]) {
   const index = col(sheet.headers, ...names);
   if (index < 0) throw new Error(`ไม่พบคอลัมน์ ${names[0]} ในชีต ${sheet.name}`);
@@ -178,8 +210,8 @@ function rangesForRows(sheet: Table, rowNumbers: number[]) {
 }
 
 export async function getAdminData(): Promise<AdminData> {
-  const [companiesTable, usersTable, equipmentSource, inventoriesTable, transactionsTable, maintenanceTable, logsTable] = await Promise.all([
-    table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log"),
+  const [companiesTable, usersTable, equipmentSource, inventoriesTable, transactionsTable, maintenanceTable, logsTable, categoriesTable] = await Promise.all([
+    table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log"), optionalCategoryTable(),
   ]);
   const pictureUpdates: Update[] = [];
   const equipmentsTable = withColumns(equipmentSource, ["Picture", "Is_Active"], pictureUpdates);
@@ -201,6 +233,12 @@ export async function getAdminData(): Promise<AdminData> {
 
   const users = usersTable.rows.map(({ record }) => ({ id: field(record, "User_ID"), companyId: field(record, "Company_ID"), companyName: companyNames.get(field(record, "Company_ID")) || "-", role: field(record, "Role"), rank: field(record, "Rank"), firstName: field(record, "First_Name"), lastName: field(record, "Last_Name"), email: field(record, "Email"), phone: field(record, "Phone"), gmail: field(record, "Gmail") }));
   const equipments = equipmentsTable.rows.filter(({ record }) => !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active", "Active", "Status").toLowerCase())).map(({ record }) => { const name = field(record, "Equip_Name"); return { id: field(record, "Equip_ID"), name, category: field(record, "Category"), requirePlate: ["true", "1", "yes"].includes(field(record, "Require_Plate").toLowerCase()), picture: field(record, "Picture") || getEquipmentImage(name) }; });
+  const categoryByName = new Map(categoriesTable.rows.filter(({ record }) => !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active", "Active", "Status").toLowerCase())).map(({ record }) => {
+    const name = field(record, "Category_Name", "Category", "Name");
+    return [name, { id: field(record, "Category_ID", "ID"), name, icon: field(record, "Icon", "Icon_Name") || defaultCategoryIcon(name) }] as const;
+  }));
+  equipments.forEach((equipment) => { if (equipment.category && !categoryByName.has(equipment.category)) categoryByName.set(equipment.category, { id: "", name: equipment.category, icon: defaultCategoryIcon(equipment.category) }); });
+  const categories = [...categoryByName.values()].sort((first, second) => first.name.localeCompare(second.name, "th"));
   const inventories = inventoriesTable.rows.map(({ record }) => {
     const equipmentId = field(record, "Equip_ID");
     const equipment = equipments.find((item) => item.id === equipmentId);
@@ -255,19 +293,20 @@ export async function getAdminData(): Promise<AdminData> {
     return { id: field(record, "Log_ID"), user: actor?.name || field(record, "User_ID") || "ระบบ", action: field(record, "Action_Type"), target, targetLabel, timestamp: field(record, "Timestamp"), details: resolvedAuditDetails(field(record, "Details"), companyNames, inventoryById, equipmentNames), companyIds: resolvedCompanyIds, companyNames: resolvedCompanyIds.map((id) => companyNames.get(id) || id) };
   }).sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
   const companies = companiesTable.rows.filter(({ record }) => !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active", "Active", "Status").toLowerCase())).map(({ record }) => { const id = field(record, "Company_ID"); const name = field(record, "Company_Name"); const stock = inventories.filter((item) => item.companyId === id); return { id, name, users: users.filter((item) => item.companyId === id).length, total: stock.reduce((sum, item) => sum + item.total, 0), available: stock.reduce((sum, item) => sum + item.available, 0), borrowed: stock.reduce((sum, item) => sum + item.borrowed, 0), broken: stock.reduce((sum, item) => sum + item.broken, 0), transactions: transactions.filter((item) => item.ownerCompanyId === id || item.borrowerCompanyId === id).length }; });
-  return { companies, users, equipments, inventories, transactions, maintenance, logs };
+  return { companies, users, equipments, categories, inventories, transactions, maintenance, logs };
 }
 
 export async function adminMutation(admin: SessionUser, input: Record<string, unknown>) {
   if (admin.role !== "Admin") throw new Error("ไม่มีสิทธิ์ผู้ดูแลระบบ");
   return withSheetsMutationLock(async () => {
     const action = String(input.action || "");
-    const [companySource, users, equipmentSource, inventorySource, transactionSource, maintenanceSource, logsSource] = await Promise.all([table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log")]);
+    const [companySource, users, equipmentSource, inventorySource, transactionSource, maintenanceSource, logsSource, categorySource] = await Promise.all([table("Companies"), table("Users"), equipmentTable(), table("Inventories"), table("Transactions"), table("Maintenance"), table("Audit_Log"), ensureCategoryTable()]);
     const updates: Update[] = [];
     const companies = withColumns(companySource, ["Is_Active"], updates);
     const logs = withColumns(logsSource, ["Details"], updates);
     let maintenance = maintenanceSource;
     const equipments = withColumns(equipmentSource, ["Picture", "Is_Active"], updates);
+    const categories = withColumns(categorySource, CATEGORY_HEADERS, updates);
     const inventories = withColumns(inventorySource, ["Asset_Owner_Company_ID", "Stock_Status"], updates);
     let target = String(input.id || "");
     let auditContext: Record<string, string> = {};
@@ -304,12 +343,28 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       if (!row) throw new Error("ไม่พบผู้ใช้งาน");
       auditContext = { userName: `${field(row.record, "Rank")} ${field(row.record, "First_Name")} ${field(row.record, "Last_Name")}`.trim(), companyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === field(row.record, "Company_ID"))?.record || {}, "Company_Name") };
       updates.push({ range: `'${users.name}'!A${row.rowNumber}:${letter(users.headers.length - 1)}${row.rowNumber}`, values: [users.headers.map(() => "")] });
+    } else if (action === "save-category") {
+      target ||= `CAT-${randomUUID().slice(0, 8)}`;
+      const row = categories.rows.find(({ record }) => field(record, "Category_ID", "ID") === target);
+      const oldName = row ? field(row.record, "Category_Name", "Category", "Name") : String(input.oldName || "").trim();
+      const name = String(input.name || "").trim();
+      const icon = String(input.icon || "Boxes").trim();
+      if (!name) throw new Error("กรุณาระบุชื่อหมวดหมู่");
+      if (categories.rows.some(({ record }) => field(record, "Category_ID", "ID") !== target && field(record, "Category_Name", "Category", "Name").toLocaleLowerCase("th") === name.toLocaleLowerCase("th") && !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active", "Active", "Status").toLowerCase()))) throw new Error("ชื่อหมวดหมู่นี้มีอยู่แล้ว");
+      const payload = { Category_ID: target, Category_Name: name, Icon: icon, Is_Active: "TRUE" };
+      if (row) Object.entries(payload).slice(1).forEach(([key, value]) => updates.push(cell(categories, row.rowNumber, requireColumn(categories, key), value)));
+      else updates.push(append(categories, valuesFor(categories, payload)));
+      if (oldName && oldName !== name) equipments.rows.filter(({ record }) => field(record, "Category") === oldName).forEach((equipment) => updates.push(cell(equipments, equipment.rowNumber, requireColumn(equipments, "Category"), name)));
+      auditContext = { equipmentName: name };
     } else if (action === "save-equipment") {
       target ||= `EQ-${randomUUID().slice(0, 8)}`;
       const row = equipments.rows.find(({ record }) => field(record, "Equip_ID") === target);
       const picture = String(input.picture || "");
       if (picture.startsWith("data:image/") && picture.length > 45_000) throw new Error("รูปยุทโธปกรณ์มีขนาดใหญ่เกินไป");
-      const payload = { Equip_ID: target, Equip_Name: String(input.name || ""), Category: String(input.category || ""), Require_Plate: input.requirePlate ? "TRUE" : "FALSE", Picture: picture || getEquipmentImage(String(input.name || "")), Is_Active: "TRUE" };
+      const category = String(input.category || "").trim();
+      const knownCategory = categories.rows.some(({ record }) => field(record, "Category_Name", "Category", "Name") === category && !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active", "Active", "Status").toLowerCase())) || equipments.rows.some(({ record }) => field(record, "Category") === category);
+      if (!knownCategory) throw new Error("กรุณาเลือกหมวดหมู่ที่มีอยู่ หรือเพิ่มหมวดหมู่ใหม่ก่อน");
+      const payload = { Equip_ID: target, Equip_Name: String(input.name || ""), Category: category, Require_Plate: input.requirePlate ? "TRUE" : "FALSE", Picture: picture || getEquipmentImage(String(input.name || "")), Is_Active: "TRUE" };
       if (row) Object.entries(payload).slice(1).forEach(([key, value]) => updates.push(cell(equipments, row.rowNumber, requireColumn(equipments, key), value)));
       else updates.push(append(equipments, valuesFor(equipments, payload)));
     } else if (action === "delete-equipment") {
@@ -320,12 +375,11 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       auditContext = { equipmentName: field(row.record, "Equip_Name") };
     } else if (action === "delete-equipment-category") {
       const category = String(input.category || "").trim();
-      const rows = equipments.rows.filter(({ record }) => field(record, "Category") === category && !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active").toLowerCase()));
-      if (!category || !rows.length) throw new Error("ไม่พบหมวดหมู่ยุทโธปกรณ์ที่ต้องการลบ");
-      const equipmentIds = new Set(rows.map(({ record }) => field(record, "Equip_ID")));
-      if (inventories.rows.some(({ record }) => equipmentIds.has(field(record, "Equip_ID")) && number(record, "Qty_Total") > 0)) throw new Error("ไม่สามารถลบหมวดหมู่ที่ยังมียุทโธปกรณ์อยู่ในคลัง กรุณาจัดการยอดคลังก่อน");
-      rows.forEach((row) => updates.push(cell(equipments, row.rowNumber, requireColumn(equipments, "Is_Active"), "FALSE")));
-      target = `CATEGORY:${category}`;
+      const categoryRow = categories.rows.find(({ record }) => field(record, "Category_ID", "ID") === target || field(record, "Category_Name", "Category", "Name") === category);
+      if (!category || !categoryRow) throw new Error("ไม่พบหมวดหมู่ยุทโธปกรณ์ที่ต้องการลบ");
+      if (equipments.rows.some(({ record }) => field(record, "Category") === category && !["false", "0", "deleted", "inactive"].includes(field(record, "Is_Active").toLowerCase()))) throw new Error("ไม่สามารถลบหมวดหมู่ที่ยังมียุทโธปกรณ์อยู่ กรุณาย้ายยุทโธปกรณ์ไปหมวดหมู่อื่นก่อน");
+      updates.push(cell(categories, categoryRow.rowNumber, requireColumn(categories, "Is_Active"), "FALSE"));
+      target = field(categoryRow.record, "Category_ID", "ID") || `CATEGORY:${category}`;
       auditContext = { equipmentName: category };
     } else if (action === "batch-adjust-inventory") {
       const requested = Array.isArray(input.items) ? input.items as Array<{ id?: unknown; total?: unknown; plateNumber?: unknown }> : [];
@@ -666,7 +720,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
     if (!lineNotification) {
       const actionLabels: Record<string, string> = {
         "save-company": "บันทึกข้อมูลกองร้อย", "delete-company": "ลบกองร้อย", "save-user": "บันทึกผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน",
-        "save-equipment": "บันทึกชนิดยุทโธปกรณ์", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์",
+        "save-equipment": "บันทึกยุทโธปกรณ์", "save-category": "บันทึกหมวดหมู่ยุทโธปกรณ์", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์",
         "save-inventory": "แก้ไขคลังยุทโธปกรณ์", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มยุทโธปกรณ์เข้าคลัง", "batch-add-inventory": "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์",
         "delete-inventory": "ลบรายการคลัง", "delete-transaction-history": "ล้างประวัติเบิกคืน",
       };
