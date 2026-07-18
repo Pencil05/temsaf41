@@ -455,12 +455,23 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       const sourceInventoryId = field(transaction.record, "Inv_ID");
       const destinationInventoryId = field(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
       const equipmentId = field(transaction.record, "Equip_ID");
-      const plateNumber = field(transaction.record, "Plate_Number");
+      const transactionPlateNumber = field(transaction.record, "Plate_Number");
       const quantity = number(transaction.record, "Outstanding_Qty") || number(transaction.record, "Qty");
       const originalQuantity = number(transaction.record, "Original_Qty") || number(transaction.record, "Qty");
-      const source = inventories.rows.find(({ record }) => field(record, "Inv_ID") === sourceInventoryId) || inventories.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId && field(record, "Equip_ID") === equipmentId && (!plateNumber || field(record, "Plate_Number") === plateNumber));
+      const source = inventories.rows.find(({ record }) => field(record, "Inv_ID") === sourceInventoryId) || inventories.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId && field(record, "Equip_ID") === equipmentId && (!transactionPlateNumber || field(record, "Plate_Number") === transactionPlateNumber));
       const resolvedEquipmentId = equipmentId || field(source?.record || {}, "Equip_ID");
-      const destination = inventories.rows.find(({ record }) => field(record, "Inv_ID") === destinationInventoryId) || inventories.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId && field(record, "Equip_ID") === resolvedEquipmentId && (!plateNumber || field(record, "Plate_Number") === plateNumber));
+      const plateNumber = transactionPlateNumber || field(source?.record || {}, "Plate_Number");
+      const destination = inventories.rows.find(({ record }) => field(record, "Inv_ID") === destinationInventoryId && field(record, "Company_ID") === borrowerCompanyId) || inventories.rows
+        .filter(({ record }) => field(record, "Company_ID") === borrowerCompanyId && field(record, "Equip_ID") === resolvedEquipmentId && (!plateNumber || field(record, "Plate_Number") === plateNumber))
+        .sort((first, second) => {
+          const score = ({ record }: RecordRow) => {
+            const assetOwner = field(record, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID");
+            if (assetOwner === ownerCompanyId) return 0;
+            if (field(record, "Stock_Status", "Inventory_Status").toLowerCase() === "borrowed") return 1;
+            return 2;
+          };
+          return score(first) - score(second);
+        })[0];
       if (!source || !destination || quantity < 1) throw new Error("ไม่พบข้อมูลคลังต้นทางหรือปลายทางสำหรับคืนยุทโธปกรณ์");
       const selfUse = ownerCompanyId === borrowerCompanyId && source.rowNumber === destination.rowNumber;
       const sourceAvailable = number(source.record, "Qty_Available");
@@ -471,7 +482,13 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
         const destinationTotal = number(destination.record, "Qty_Total");
         const destinationAvailable = number(destination.record, "Qty_Available");
         if (destinationTotal < quantity) {
-          const chained = transactionSource.rows.find(({ record }) => field(record, "Tx_ID") !== target && field(record, "Owner_Company_ID") === borrowerCompanyId && ["borrowed", "overdue"].includes(field(record, "Status").toLowerCase()) && field(record, "Transaction_Type").toLowerCase() !== "return" && (!resolvedEquipmentId || field(record, "Equip_ID") === resolvedEquipmentId) && (!plateNumber || field(record, "Plate_Number") === plateNumber));
+          const chained = transactionSource.rows.find(({ record }) => {
+            if (field(record, "Tx_ID") === target || field(record, "Owner_Company_ID") !== borrowerCompanyId || !["borrowed", "overdue"].includes(field(record, "Status").toLowerCase()) || field(record, "Transaction_Type").toLowerCase() === "return") return false;
+            const chainedSource = inventories.rows.find(({ record: inventory }) => field(inventory, "Inv_ID") === field(record, "Inv_ID"));
+            const chainedEquipmentId = field(record, "Equip_ID") || field(chainedSource?.record || {}, "Equip_ID");
+            const chainedPlateNumber = field(record, "Plate_Number") || field(chainedSource?.record || {}, "Plate_Number");
+            return (!resolvedEquipmentId || chainedEquipmentId === resolvedEquipmentId) && (!plateNumber || chainedPlateNumber === plateNumber);
+          });
           if (chained) { const nextCompanyId = field(chained.record, "Borrower_Company_ID"); throw new Error(`ยุทโธปกรณ์รายการนี้ถูกเบิกต่อไปยัง ${field(companies.rows.find(({ record }) => field(record, "Company_ID") === nextCompanyId)?.record || {}, "Company_Name") || nextCompanyId} ต้องคืนรายการ ${field(chained.record, "Tx_ID")} ก่อน`); }
           throw new Error("ยอดรวมในคลังผู้ยืมไม่เพียงพอสำหรับการคืน กรุณาตรวจสอบการเคลื่อนย้ายย้อนหลัง");
         }
@@ -482,6 +499,9 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
           cell(inventories, destination.rowNumber, requireColumn(inventories, "Qty_Total"), destinationTotal - quantity),
           cell(inventories, destination.rowNumber, requireColumn(inventories, "Qty_Available"), Math.max(0, destinationAvailable - quantity)),
         );
+        if (field(destination.record, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID") && field(destination.record, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID") !== borrowerCompanyId) {
+          updates.push(cell(inventories, destination.rowNumber, requireColumn(inventories, "Stock_Status"), destinationTotal - quantity > 0 ? "Borrowed" : "Returned"));
+        }
       }
       const now = new Date().toISOString();
       const returnGroupId = `RET-${randomUUID()}`;
@@ -496,9 +516,12 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       lineNotification = { kind: "return", actorName: [admin.rank, admin.firstName, admin.lastName].filter(Boolean).join(" ") || admin.email, ownerCompanyId, ownerCompanyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === ownerCompanyId)?.record || {}, "Company_Name") || ownerCompanyId, borrowerCompanyId, borrowerCompanyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === borrowerCompanyId)?.record || {}, "Company_Name") || borrowerCompanyId, referenceId: returnGroupId, occurredAt: now, items: [{ name: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === resolvedEquipmentId)?.record || {}, "Equip_Name") || "ไม่ระบุชื่อยุทโธปกรณ์", quantity, plateNumber }] };
     } else if (action === "delete-transaction-history") {
       const requestedIds = new Set((Array.isArray(input.ids) ? input.ids : [input.id]).map(String).filter(Boolean));
-      const isActiveBorrow = ({ record }: RecordRow) => field(record, "Transaction_Type").toLowerCase() !== "return"
-        && ["borrowed", "overdue"].includes(field(record, "Status").toLowerCase())
-        && (number(record, "Outstanding_Qty") || number(record, "Qty")) > 0;
+      const isActiveBorrow = ({ record }: RecordRow) => {
+        if (field(record, "Transaction_Type").toLowerCase() === "return" || !["borrowed", "overdue"].includes(field(record, "Status").toLowerCase())) return false;
+        if ((number(record, "Outstanding_Qty") || number(record, "Qty")) < 1) return false;
+        const sourceInventory = inventories.rows.find(({ record: inventory }) => field(inventory, "Inv_ID") === field(record, "Inv_ID"));
+        return Boolean(sourceInventory && number(sourceInventory.record, "Qty_Borrowed") > 0);
+      };
       const selectedRows = input.all === true
         ? transactionSource.rows.filter((row) => !isActiveBorrow(row))
         : transactionSource.rows.filter(({ record }) => requestedIds.has(field(record, "Tx_ID")));

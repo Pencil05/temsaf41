@@ -169,6 +169,40 @@ function inferLegacySourceInventory(transaction: Row, inventories: Row[]) {
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
+function findReturnDestinationInventory(
+  transaction: Row,
+  inventories: Row[],
+  equipmentId: string,
+  plateNumber: string,
+) {
+  const ownerCompanyId = value(transaction.record, "Owner_Company_ID", "OwnerCompanyId");
+  const borrowerCompanyId = value(transaction.record, "Borrower_Company_ID", "BorrowerCompanyId");
+  const destinationInventoryId = value(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
+  const exactDestination = inventories.find((row) =>
+    destinationInventoryId &&
+    inventoryKey(row) === destinationInventoryId &&
+    value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId,
+  );
+  if (exactDestination) return exactDestination;
+
+  return inventories
+    .filter((row) =>
+      value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId &&
+      value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId &&
+      (!plateNumber || value(row.record, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial") === plateNumber),
+    )
+    .sort((first, second) => {
+      const score = (row: Row) => {
+        const assetOwner = value(row.record, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID");
+        const status = value(row.record, "Stock_Status", "Inventory_Status").toLowerCase();
+        if (assetOwner === ownerCompanyId) return 0;
+        if (status === "borrowed") return 1;
+        return 2;
+      };
+      return score(first) - score(second);
+    })[0];
+}
+
 export async function getDashboardActionData(user: SessionUser): Promise<DashboardActionData> {
   const [companiesTable, equipmentTable, inventories, transactions, account] = await Promise.all([
     readTable("Companies"), readEquipmentTable(), readTable("Inventories"), readTable("Transactions"),
@@ -246,7 +280,7 @@ export async function returnEquipment(
   input: { transactionId?: string; quantity?: number; items?: Array<{ transactionId: string; quantity: number }>; evidenceImage?: string },
 ) {
   const outcome = await withSheetsMutationLock(async () => {
-    const [transactionSource, inventories, audits, companies, equipments] = await Promise.all([
+    const [transactionSource, inventorySource, audits, companies, equipments] = await Promise.all([
       readTable("Transactions"), readTable("Inventories"), readTable("Audit_Log"), readTable("Companies"), readEquipmentTable(),
     ]);
     const companyNames = new Map(companies.rows.map(({ record }) => [value(record, "Company_ID", "CompanyId", "ID"), value(record, "Company_Name", "CompanyName", "Name")]));
@@ -259,6 +293,7 @@ export async function returnEquipment(
     if (!requests.length) throw new InventoryActionError("กรุณาเลือกรายการที่ต้องการคืน");
     if (new Set(requests.map((item) => item.transactionId)).size !== requests.length) throw new InventoryActionError("พบรายการคืนซ้ำกัน");
     const updates: Update[] = [];
+    const inventories = withColumns(inventorySource, ["Asset_Owner_Company_ID", "Stock_Status"], updates);
     const transactions = withColumns(transactionSource, ["Transaction_Type", "Parent_Tx_ID", "Original_Qty", "Outstanding_Qty", "Return_Group_ID", "Return_Date", "Return_User_ID", "Return_Evidence_Image"], updates);
     const selected = requests.map((request) => {
       const transaction = transactions.rows.find(({ record }) => value(record, "Tx_ID", "Transaction_ID", "TransactionId", "ID") === request.transactionId && value(record, "Transaction_Type").toLowerCase() !== "return");
@@ -268,19 +303,12 @@ export async function returnEquipment(
       const borrowerCompanyId = value(transaction.record, "Borrower_Company_ID", "BorrowerCompanyId");
       if (borrowerCompanyId !== user.companyId) throw new InventoryActionError("หน่วยของคุณไม่มีสิทธิ์คืนรายการนี้");
       const sourceInventoryId = value(transaction.record, "Inv_ID", "Inventory_ID", "InventoryId");
-      const destinationInventoryId = value(transaction.record, "Destination_Inventory_ID", "Borrower_Inventory_ID");
       const transactionPlateNumber = value(transaction.record, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial");
       const directEquipmentId = value(transaction.record, "Equip_ID", "Equipment_ID", "EquipId");
       const sourceInventory = inventories.rows.find((row) => sourceInventoryId && inventoryKey(row) === sourceInventoryId && (!transactionPlateNumber || value(row.record, "Plate_Number", "PlateNumber") === transactionPlateNumber)) || inventories.rows.find((row) => directEquipmentId && value(row.record, "Company_ID", "CompanyId") === ownerCompanyId && value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === directEquipmentId && (!transactionPlateNumber || value(row.record, "Plate_Number", "PlateNumber") === transactionPlateNumber)) || inferLegacySourceInventory(transaction, inventories.rows);
       const equipmentId = directEquipmentId || value(sourceInventory?.record ?? {}, "Equip_ID", "Equipment_ID", "EquipId");
       const plateNumber = transactionPlateNumber || value(sourceInventory?.record ?? {}, "Plate_Number", "PlateNumber", "Serial_Number", "SerialNumber", "Weapon_Serial");
-      const destinationInventory = inventories.rows.find((row) =>
-        destinationInventoryId && inventoryKey(row) === destinationInventoryId && (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
-      ) || (!destinationInventoryId ? inventories.rows.find((row) =>
-        value(row.record, "Company_ID", "CompanyId") === borrowerCompanyId &&
-        value(row.record, "Equip_ID", "Equipment_ID", "EquipId") === equipmentId &&
-        (!plateNumber || value(row.record, "Plate_Number", "PlateNumber") === plateNumber),
-      ) : undefined);
+      const destinationInventory = findReturnDestinationInventory(transaction, inventories.rows, equipmentId, plateNumber);
       if (!sourceInventory || !destinationInventory) throw new InventoryActionError("ไม่พบคลังต้นทางหรือปลายทาง");
       const originalQuantity = numberValue(transaction.record, "Original_Qty") || numberValue(transaction.record, "Qty", "Quantity");
       const outstandingQuantity = numberValue(transaction.record, "Outstanding_Qty") || numberValue(transaction.record, "Qty", "Quantity");
@@ -298,6 +326,11 @@ export async function returnEquipment(
       const borrowed = numberValue(item.row.record, "Qty_Borrowed", "Borrowed_Quantity") + item.borrowed;
       if (total < 0 || available < 0 || borrowed < 0) throw new InventoryActionError("ยอดคลังไม่เพียงพอสำหรับรายการคืนที่เลือก");
       updates.push(cell(inventories, item.row.rowNumber, column(inventories.headers, "Qty_Total", "Total_Quantity"), total), cell(inventories, item.row.rowNumber, column(inventories.headers, "Qty_Available", "Available_Quantity"), available), cell(inventories, item.row.rowNumber, column(inventories.headers, "Qty_Borrowed", "Borrowed_Quantity"), borrowed));
+      const companyId = value(item.row.record, "Company_ID", "CompanyId");
+      const assetOwnerCompanyId = value(item.row.record, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID");
+      if (assetOwnerCompanyId && assetOwnerCompanyId !== companyId) {
+        updates.push(cell(inventories, item.row.rowNumber, column(inventories.headers, "Stock_Status", "Inventory_Status"), total > 0 ? "Borrowed" : "Returned"));
+      }
     }
     const now = new Date().toISOString();
     const returnGroupId = `RET-${crypto.randomUUID()}`;
