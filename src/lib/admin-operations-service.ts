@@ -223,7 +223,7 @@ export async function runScheduledAdminReports(now = new Date()) {
   const bangkok = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
   const dateKey = `${bangkok.getFullYear()}-${bangkok.getMonth() + 1}-${bangkok.getDate()}`;
   const due = schedules.rows.filter(({ record }) => {
-    if (field(record, "Enabled").toLowerCase() !== "true" || numeric(record, "Hour") !== bangkok.getHours()) return false;
+    if (field(record, "Enabled").toLowerCase() !== "true") return false;
     const frequency = field(record, "Frequency");
     const periodKey = frequency === "daily" ? dateKey : frequency === "weekly" ? `${bangkok.getFullYear()}-W${Math.ceil((((bangkok.getTime() - new Date(bangkok.getFullYear(), 0, 1).getTime()) / 86400000) + new Date(bangkok.getFullYear(), 0, 1).getDay() + 1) / 7)}` : `${bangkok.getFullYear()}-${bangkok.getMonth() + 1}`;
     const dayMatches = frequency === "daily" || (frequency === "weekly" && bangkok.getDay() === numeric(record, "Day")) || (frequency === "monthly" && bangkok.getDate() === numeric(record, "Day"));
