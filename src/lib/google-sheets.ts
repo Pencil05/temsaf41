@@ -24,7 +24,7 @@ export type DashboardActivity = {
   message: string;
   date: string;
   isOverdue: boolean;
-  kind: "borrow" | "return" | "defect" | "overdue";
+  kind: "borrow" | "return" | "defect" | "overdue" | "due";
   href: string;
 };
 
@@ -408,8 +408,22 @@ export async function getUserDashboardData(user: SessionUser): Promise<UserDashb
         href: `/user/history?tx=${encodeURIComponent(getField(record, "Maint_ID", "Maintenance_ID", "ID") || `MNT-${index}`)}`,
       };
     });
-  const activities = [...transactionActivities, ...maintenanceActivities]
-    .sort((first, second) => Date.parse(second.date) - Date.parse(first.date))
+  const dueSoonActivities: DashboardActivity[] = transactions.filter((transaction) => {
+    const status = getField(transaction, "Status").toLowerCase();
+    const dueDate = getField(transaction, "Due_Date", "DueDate");
+    const remaining = Date.parse(dueDate) - Date.now();
+    return getField(transaction, "Borrower_Company_ID", "BorrowerCompanyId") === user.companyId && ["borrowed", "overdue"].includes(status) && Boolean(dueDate) && remaining <= 24 * 60 * 60 * 1000;
+  }).map((transaction, index) => {
+    const inventoryId = getField(transaction, "Inv_ID", "Inventory_ID", "InventoryId");
+    const equipmentId = getField(transaction, "Equip_ID", "Equipment_ID", "EquipId") || equipmentIdByInventoryId.get(inventoryId) || "";
+    const equipmentName = equipmentById.get(equipmentId)?.name || getField(transaction, "Equip_Name", "Equipment_Name") || "ยุทโธปกรณ์";
+    const dueDate = getField(transaction, "Due_Date", "DueDate");
+    const overdue = Date.parse(dueDate) < Date.now();
+    const id = getField(transaction, "Tx_ID", "Transaction_ID", "ID") || `DUE-${index}`;
+    return { id: `reminder:${id}`, message: overdue ? `${equipmentName} เกินกำหนดคืนแล้ว กรุณาดำเนินการคืนโดยเร็ว` : `${equipmentName} จะครบกำหนดคืนภายใน 24 ชั่วโมง`, date: dueDate, isOverdue: overdue, kind: overdue ? "overdue" as const : "due" as const, href: "/user/my-items" };
+  });
+  const activities = [...dueSoonActivities, ...transactionActivities, ...maintenanceActivities]
+    .sort((first, second) => Number(second.kind === "overdue" || second.kind === "due") - Number(first.kind === "overdue" || first.kind === "due") || Date.parse(second.date) - Date.parse(first.date))
     .slice(0, 3);
 
   const categories = Array.from(categoryNames).map((name) => ({

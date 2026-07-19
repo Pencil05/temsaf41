@@ -1,18 +1,3 @@
-import { LoaderCircle, ShieldCheck } from "lucide-react";
-
 export default function AdminDashboardLoading() {
-  return (
-    <main className="grid min-h-dvh place-items-center bg-slate-50 px-6 text-slate-900">
-      <div className="text-center" role="status" aria-live="polite">
-        <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
-          <ShieldCheck className="size-8" />
-        </span>
-        <div className="mt-6 flex items-center justify-center gap-2 text-blue-600">
-          <LoaderCircle className="size-5 animate-spin" />
-          <span className="font-semibold">กำลังเตรียม Admin Dashboard...</span>
-        </div>
-        <p className="mt-2 text-sm text-slate-500">กำลังอ่านข้อมูลล่าสุดจากคลังส่วนกลาง</p>
-      </div>
-    </main>
-  );
+  return <main className="min-h-dvh animate-pulse bg-slate-50 px-4 py-5 lg:pl-72" role="status" aria-label="กำลังโหลด Admin Dashboard"><div className="mx-auto max-w-7xl"><div className="h-14 rounded-2xl border border-slate-200 bg-white" /><div className="mt-6 h-56 rounded-[30px] bg-gradient-to-r from-slate-300 via-slate-200 to-slate-300" /><div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-36 rounded-2xl border border-slate-200 bg-white" />)}</div><div className="mt-6 h-80 rounded-2xl border border-slate-200 bg-white" /><span className="sr-only">กำลังอ่านข้อมูลล่าสุดจากคลังส่วนกลาง</span></div></main>;
 }

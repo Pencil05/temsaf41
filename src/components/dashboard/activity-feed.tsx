@@ -27,6 +27,12 @@ const activityTone = {
     meta: "text-red-700",
     label: "เกินกำหนดส่งคืน",
   },
+  due: {
+    card: "border-orange-200 bg-orange-50 active:border-orange-400 active:bg-orange-100",
+    icon: "bg-orange-100 text-orange-700",
+    meta: "text-orange-700",
+    label: "ใกล้ครบกำหนดส่งคืน",
+  },
 };
 
 export function ActivityFeed({ activities }: { activities: DashboardActivity[] }) {

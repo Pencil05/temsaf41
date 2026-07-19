@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, History, Home, LogOut, Menu, PackageSearch, RefreshCw, RotateCcw, Search, Settings, UserRound, Wrench, X } from "lucide-react";
+import { Boxes, History, Home, ListTodo, LogOut, Menu, PackageSearch, RefreshCw, RotateCcw, Search, Settings, UserRound, Wrench, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -8,16 +8,18 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { UserAiAssistant } from "@/components/user/user-ai-assistant";
+import { HelpGuide } from "@/components/ui/help-guide";
 import type { AccountProfile } from "@/lib/account-service";
 import type { GlobalSearchItem } from "@/lib/google-sheets";
 
 const shortcuts = [
-  { label: "หน้าหลัก", href: "/user/dashboard", Icon: Home, tone: "bg-sky-100 text-sky-700" },
-  { label: "เบิกยุทโธปกรณ์", href: "/user/borrow", Icon: PackageSearch, tone: "bg-cyan-100 text-cyan-700" },
-  { label: "คืนยุทโธปกรณ์", href: "/user/dashboard?action=return", Icon: RotateCcw, tone: "bg-emerald-100 text-emerald-700" },
-  { label: "ประวัติการเบิก / คืน", href: "/user/history", Icon: History, tone: "bg-amber-100 text-amber-700" },
-  { label: "ยุทโธปกรณ์ชำรุด", href: "/user/maintenance", Icon: Wrench, tone: "bg-orange-100 text-orange-700" },
-  { label: "ตั้งค่าโปรไฟล์", href: "/user/settings", Icon: Settings, tone: "bg-indigo-100 text-indigo-700" },
+  { label: "หน้าหลัก", aliases: "หน้าแรก dashboard ภาพรวม", href: "/user/dashboard", Icon: Home, tone: "bg-sky-100 text-sky-700" },
+  { label: "รายการของฉัน", aliases: "งานของฉัน กำลังยืม ใกล้ครบกำหนด เกินกำหนด ต้องคืนวันนี้", href: "/user/my-items", Icon: ListTodo, tone: "bg-violet-100 text-violet-700" },
+  { label: "เบิกยุทโธปกรณ์", aliases: "ยืม เบิกของ เบิกอาวุธ ใช้งาน ฝึก", href: "/user/borrow", Icon: PackageSearch, tone: "bg-cyan-100 text-cyan-700" },
+  { label: "คืนยุทโธปกรณ์", aliases: "คืนของ ส่งคืน คืนอาวุธ", href: "/user/dashboard?action=return", Icon: RotateCcw, tone: "bg-emerald-100 text-emerald-700" },
+  { label: "ประวัติการเบิก / คืน", aliases: "ใบเสร็จ รายการเก่า เอกสาร", href: "/user/history", Icon: History, tone: "bg-amber-100 text-amber-700" },
+  { label: "ยุทโธปกรณ์ชำรุด", aliases: "แจ้งเสีย ซ่อม ชำรุด พัง", href: "/user/maintenance", Icon: Wrench, tone: "bg-orange-100 text-orange-700" },
+  { label: "ตั้งค่าโปรไฟล์", aliases: "ข้อมูลส่วนตัว รหัสผ่าน เบอร์โทร gmail line", href: "/user/settings", Icon: Settings, tone: "bg-indigo-100 text-indigo-700" },
 ];
 
 export function UserShell({ profile, searchItems, children }: { profile: AccountProfile; searchItems: GlobalSearchItem[]; children: React.ReactNode }) {
@@ -37,8 +39,9 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
     const keyword = query.trim().toLocaleLowerCase("th");
     if (!keyword) return [];
 
+    const normalizedKeyword = keyword.replace(/ของที่|รายการที่|ต้องการ|ช่วย|กรุณา/g, "").trim();
     const menuResults = shortcuts
-      .filter((item) => item.label.toLocaleLowerCase("th").includes(keyword))
+      .filter((item) => `${item.label} ${item.aliases}`.toLocaleLowerCase("th").includes(normalizedKeyword || keyword))
       .map((item) => ({
         id: `menu:${item.href}`,
         label: item.label,
@@ -276,6 +279,7 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
               <RefreshCw className={`size-5 ${isRefreshing ? "animate-spin" : ""}`} />
             </button>
 
+            <HelpGuide pathname={pathname} />
             <ThemeToggle />
           </div>
         </header>

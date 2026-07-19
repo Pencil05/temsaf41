@@ -1,5 +1,3 @@
-import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
-
 export default function UserLoading() {
-  return <ActionLoadingOverlay message="กำลังเปิดหน้าและโหลดข้อมูล..." />;
+  return <main className="min-h-dvh animate-pulse bg-slate-50 px-4 py-5 sm:px-6 sm:py-8" role="status" aria-label="กำลังโหลดข้อมูล"><div className="mx-auto max-w-7xl"><div className="h-48 rounded-[28px] bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200" /><div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-32 rounded-2xl border border-slate-200 bg-white p-4"><div className="size-10 rounded-xl bg-slate-200" /><div className="mt-4 h-4 w-2/3 rounded bg-slate-200" /><div className="mt-2 h-7 w-1/3 rounded bg-slate-100" /></div>)}</div><div className="mt-6 h-12 w-64 max-w-full rounded-xl bg-slate-200" /><div className="mt-3 space-y-3">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-20 rounded-2xl border border-slate-200 bg-white" />)}</div><span className="sr-only">กำลังอ่านข้อมูลล่าสุด กรุณารอสักครู่</span></div></main>;
 }

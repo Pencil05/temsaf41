@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, Download, FileImage, FileText, PackagePlus, RotateCcw, UploadCloud, Wrench, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileImage, FileText, PackagePlus, Plus, RotateCcw, Trash2, UploadCloud, Wrench, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -11,6 +11,8 @@ import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { CompactSelect } from "@/components/ui/compact-select";
 import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
 import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
+import { useUnsavedDraft } from "@/hooks/use-unsaved-draft";
+import { fetchWithRetry } from "@/lib/client-request";
 import type { DashboardActionData } from "@/lib/inventory-action-service";
 
 type Mode = "return" | "defect" | null;
@@ -26,6 +28,7 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   const [returnEvidenceImage, setReturnEvidenceImage] = useState("");
   const [isPreparingReturnEvidence, setIsPreparingReturnEvidence] = useState(false);
   const [defectKey, setDefectKey] = useState("");
+  const [defectSelections, setDefectSelections] = useState<Record<string, number>>({});
   const [quantity, setQuantity] = useState<number | "">(1);
   const [note, setNote] = useState("");
   const [defectEvidenceName, setDefectEvidenceName] = useState("");
@@ -38,9 +41,12 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   const [returnCompletedAt, setReturnCompletedAt] = useState("");
   const [receiptDownloading, setReceiptDownloading] = useState(false);
   const [returnDownloadOpen, setReturnDownloadOpen] = useState(false);
+  const [requestMessage, setRequestMessage] = useState("กำลังส่งข้อมูลเข้าสู่ระบบ");
   const returnReceiptRef = useRef<HTMLDivElement>(null);
+  const { clearDraft } = useUnsavedDraft({ storageKey: `tems-dashboard-actions:${data.companyName}`, value: { mode, returnSelections, returnEvidenceName, returnEvidenceImage, defectKey, defectSelections, quantity, note, defectEvidenceName, defectEvidenceImage }, dirty: Boolean(mode && (Object.keys(returnSelections).length || returnEvidenceImage || defectKey || Object.keys(defectSelections).length || note || defectEvidenceImage)), onRestore: (draft) => { setMode(draft.mode || null); setReturnSelections(draft.returnSelections || {}); setReturnEvidenceName(draft.returnEvidenceName || ""); setReturnEvidenceImage(draft.returnEvidenceImage || ""); setDefectKey(draft.defectKey || ""); setDefectSelections(draft.defectSelections || {}); setQuantity(draft.quantity || 1); setNote(draft.note || ""); setDefectEvidenceName(draft.defectEvidenceName || ""); setDefectEvidenceImage(draft.defectEvidenceImage || ""); } });
 
   const defect = data.defects.find((item) => `${item.sourceType}:${item.sourceId}` === defectKey);
+  const selectedDefects = data.defects.filter((item) => defectSelections[`${item.sourceType}:${item.sourceId}`] !== undefined);
   const selectedReturns = data.returns.filter((item) => returnSelections[item.transactionId] !== undefined);
   const selectedOwnerId = selectedReturns[0]?.ownerCompanyId || "";
   const selectedOwnerName = selectedReturns[0]?.ownerCompanyName || "";
@@ -111,7 +117,16 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
     setDefectEvidenceName("");
     setDefectEvidenceImage("");
     setDefectKey("");
+    setDefectSelections({});
     setMode("defect");
+  }
+
+  function addDefectSelection() {
+    const requested = Number(quantity);
+    if (!defect || requested < 1 || requested > defect.maximum) { setMessage({ type: "error", text: "กรุณาเลือกยุทโธปกรณ์และตรวจสอบจำนวน" }); return; }
+    const key = `${defect.sourceType}:${defect.sourceId}`;
+    setDefectSelections((current) => ({ ...current, [key]: requested }));
+    setDefectKey(""); setQuantity(1);
   }
 
   async function handleDefectEvidence(event: ChangeEvent<HTMLInputElement>) {
@@ -147,23 +162,15 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
   async function confirmReturn() {
     if (!selectedReturns.length) return;
     setSubmitting(true);
-
-    const response = await fetch("/api/return", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: selectedReturns.map((item) => ({ transactionId: item.transactionId, quantity: Number(returnSelections[item.transactionId]) })), evidenceImage: returnEvidenceImage }),
-    });
-
-    const payload = (await response.json()) as { error?: string; returnGroupId?: string };
-    setSubmitting(false);
-
-    if (!response.ok) {
-      setMessage({ type: "error", text: payload.error || "คืนรายการไม่สำเร็จ" });
-      return;
-    }
-
-    setReturnCompleted(true);
-    setReturnReferenceId(payload.returnGroupId || `RET-${Date.now()}`);
+    try {
+      const response = await fetchWithRetry("/api/return", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: selectedReturns.map((item) => ({ transactionId: item.transactionId, quantity: Number(returnSelections[item.transactionId]) })), evidenceImage: returnEvidenceImage }) }, { onProgress: (progress) => setRequestMessage(progress.message) });
+      const payload = (await response.json()) as { error?: string; returnGroupId?: string };
+      if (!response.ok) throw new Error(payload.error || "คืนรายการไม่สำเร็จ");
+      clearDraft();
+      setReturnCompleted(true);
+      setReturnReferenceId(payload.returnGroupId || `RET-${Date.now()}`);
+    } catch (error) { setMessage({ type: "error", text: error instanceof Error ? error.message : "คืนรายการไม่สำเร็จ" }); return; }
+    finally { setSubmitting(false); }
     setReturnCompletedAt(new Date().toISOString());
     setMessage({ type: "success", text: "คืนยุทโธปกรณ์เรียบร้อยแล้ว" });
   }
@@ -213,10 +220,8 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
 
   async function submitDefect(event: FormEvent) {
     event.preventDefault();
-    const requestedQuantity = Number(quantity);
-
-    if (!defect || requestedQuantity < 1 || requestedQuantity > defect.maximum) {
-      setMessage({ type: "error", text: "กรุณาตรวจสอบรายการและจำนวน" });
+    if (!selectedDefects.length) {
+      setMessage({ type: "error", text: "กรุณาเพิ่มยุทโธปกรณ์ที่ชำรุดอย่างน้อย 1 รายการ" });
       return;
     }
     if (!defectEvidenceImage) {
@@ -226,35 +231,28 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
 
     setSubmitting(true);
 
-    const response = await fetch("/api/defect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sourceType: defect.sourceType,
-        sourceId: defect.sourceId,
-        quantity: requestedQuantity,
-        note,
-        evidenceImage: defectEvidenceImage,
-      }),
-    });
-
-    const payload = (await response.json()) as { error?: string };
+    const completed: string[] = [];
+    try {
+      for (const [index, item] of selectedDefects.entries()) {
+        const key = `${item.sourceType}:${item.sourceId}`;
+        const response = await fetchWithRetry("/api/defect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceType: item.sourceType, sourceId: item.sourceId, quantity: defectSelections[key], note, evidenceImage: defectEvidenceImage }) }, { onProgress: (progress) => setRequestMessage(`รายการ ${index + 1}/${selectedDefects.length} · ${progress.message}`) });
+        const payload = (await response.json()) as { error?: string };
+        if (!response.ok) throw new Error(payload.error || `แจ้งเสียรายการ ${item.name} ไม่สำเร็จ`);
+        completed.push(key);
+      }
+      clearDraft();
+    } catch (error) { setDefectSelections((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !completed.includes(key)))); setMessage({ type: "error", text: `${completed.length ? `บันทึกแล้ว ${completed.length} รายการ · ` : ""}${error instanceof Error ? error.message : "แจ้งเสียไม่สำเร็จ"}` }); setSubmitting(false); return; }
     setSubmitting(false);
 
-    if (!response.ok) {
-      setMessage({ type: "error", text: payload.error || "แจ้งเสียไม่สำเร็จ" });
-      return;
-    }
-
     closeMode();
-    setMessage({ type: "success", text: "บันทึกการแจ้งเสียเรียบร้อยแล้ว" });
+    setMessage({ type: "success", text: `บันทึกการแจ้งเสีย ${selectedDefects.length} รายการเรียบร้อยแล้ว` });
     router.refresh();
   }
 
   return (
     <>
       {(submitting || isPreparingDefectEvidence || isPreparingReturnEvidence) && (
-          <ActionLoadingOverlay message={isPreparingDefectEvidence || isPreparingReturnEvidence ? "กำลังเตรียมรูปหลักฐาน..." : mode === "return" ? "กำลังคืนยุทโธปกรณ์และปรับยอดคลัง..." : "กำลังบันทึกการแจ้งเสีย..."} />
+              <ActionLoadingOverlay message={isPreparingDefectEvidence || isPreparingReturnEvidence ? "กำลังเตรียมรูปหลักฐาน..." : requestMessage} />
       )}
       {receiptDownloading && <ActionLoadingOverlay message="กำลังสร้างไฟล์ใบเสร็จ..." />}
 
@@ -361,6 +359,9 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
                 className="h-12 w-full rounded-xl border border-slate-200 px-3"
               />
             </label>
+
+            <button type="button" onClick={addDefectSelection} disabled={!defect} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-orange-100 font-bold text-orange-800 disabled:opacity-40"><Plus className="size-4" />เพิ่มเข้ารายการแจ้งเสีย</button>
+            {selectedDefects.length > 0 && <div className="max-h-52 space-y-2 overflow-y-auto rounded-2xl border border-orange-200 bg-orange-50/60 p-2">{selectedDefects.map((item) => { const key = `${item.sourceType}:${item.sourceId}`; return <div key={key} className="flex items-center gap-3 rounded-xl bg-white p-2.5"><span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50"><EquipmentImage name={item.name} src={item.picture || undefined} className="size-full" /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold">{item.name}</span><span className="text-xs text-orange-700">จำนวน {defectSelections[key]}{item.plateNumber ? ` · ${item.plateNumber}` : ""}</span></span><button type="button" onClick={() => setDefectSelections((current) => Object.fromEntries(Object.entries(current).filter(([savedKey]) => savedKey !== key)))} className="grid size-9 place-items-center rounded-lg bg-red-50 text-red-600"><Trash2 className="size-4" /></button></div>; })}</div>}
 
             <label className="block">
               <span className="mb-2 block text-sm font-semibold">รายละเอียดอาการ</span>

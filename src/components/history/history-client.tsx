@@ -1,12 +1,14 @@
 "use client";
 
-import { ChevronDown, Download, Eye, FileImage, FileText, PackageCheck, PackagePlus, Wrench, X } from "lucide-react";
+import { ChevronDown, Download, Eye, FileImage, FileText, PackageCheck, PackagePlus, Repeat2, RotateCcw, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { receiptCanvas } from "@/lib/client-media";
 import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
 import type { UserHistoryItem } from "@/lib/google-sheets";
+import { fetchWithRetry } from "@/lib/client-request";
 
 export function HistoryClient({
   items,
@@ -17,10 +19,12 @@ export function HistoryClient({
   initialTx?: string;
   statusColumnLabel?: string;
 }) {
+  const router = useRouter();
   const [selected, setSelected] = useState<UserHistoryItem | null>(items.find((item) => item.id === initialTx || item.transactionIds.includes(initialTx || "")) || null);
   const [downloads, setDownloads] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState("");
+  const [now, setNow] = useState(0);
   const [dateFilter, setDateFilter] = useState("");
   const visibleItems = useMemo(() => dateFilter ? items.filter((item) => localDateKey(item.date) === dateFilter) : items, [dateFilter, items]);
   const groups = useMemo(() => groupHistoryByDate(visibleItems), [visibleItems]);
@@ -29,6 +33,7 @@ export function HistoryClient({
   usePopupDismiss(Boolean(selected) && !downloads, () => setSelected(null));
   usePopupDismiss(downloads, () => setDownloads(false));
   useEffect(() => { if (!message) return; const timeout = window.setTimeout(() => setMessage(""), 3000); return () => window.clearTimeout(timeout); }, [message]);
+  useEffect(() => { const initial = window.setTimeout(() => setNow(Date.now()), 0); const timer = window.setInterval(() => setNow(Date.now()), 15_000); return () => { window.clearTimeout(initial); window.clearInterval(timer); }; }, []);
 
   async function canvas() {
     if (!receiptRef.current) throw new Error("Receipt unavailable");
@@ -68,6 +73,26 @@ export function HistoryClient({
     } finally {
       setProcessing(false);
     }
+  }
+
+  function repeatBorrow(item: UserHistoryItem) {
+    localStorage.setItem("tems-borrow-repeat", JSON.stringify({ items: item.items.map((part) => ({ name: part.name, quantity: part.quantity, plateNumber: part.plateNumber || "" })), borrowerCompanyName: item.borrowerCompanyName, note: item.note }));
+    window.location.href = "/user/borrow?repeat=1";
+  }
+
+  async function undoBorrow(item: UserHistoryItem) {
+    if (!window.confirm("ยืนยันยกเลิกรายการนี้? ระบบจะคืนยอดทั้งหมดกลับคลังเดิมและบันทึก Audit Log")) return;
+    setProcessing(true);
+    setMessage("กำลังยกเลิกและคืนยอดกลับคลัง...");
+    try {
+      const response = await fetchWithRetry("/api/return", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: item.items.filter((part) => part.transactionId).map((part) => ({ transactionId: part.transactionId, quantity: part.quantity })) }) });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "ไม่สามารถยกเลิกรายการได้");
+      setSelected(null);
+      setMessage("ยกเลิกรายการและคืนยอดกลับคลังเรียบร้อยแล้ว");
+      router.refresh();
+    } catch (error) { setMessage(error instanceof Error ? error.message : "ไม่สามารถยกเลิกรายการได้"); }
+    finally { setProcessing(false); }
   }
 
   return <>
@@ -115,7 +140,8 @@ export function HistoryClient({
               items={selected.items.map((item) => ({ name: item.name, quantity: item.quantity, plateNumber: item.plateNumber }))}
             />
           </div>
-          <div className="mt-4 flex gap-3">
+          {selected.movementType === "borrow" && <div className="mt-4 grid grid-cols-2 gap-2"><button type="button" onClick={() => repeatBorrow(selected)} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-violet-50 text-sm font-bold text-violet-700"><Repeat2 className="size-4" />ทำรายการซ้ำ</button>{now > 0 && now - Date.parse(selected.date) <= 5 * 60 * 1000 && ["borrowed", "overdue"].includes(selected.status.toLowerCase()) && <button type="button" onClick={() => undoBorrow(selected)} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-red-50 text-sm font-bold text-red-700"><RotateCcw className="size-4" />Undo ภายใน 5 นาที</button>}</div>}
+          <div className="mt-3 flex gap-3">
             <button onClick={() => setSelected(null)} className="h-12 flex-1 rounded-full bg-white font-bold text-slate-600">ปิด</button>
             <button onClick={() => setDownloads(true)} className="grid size-12 place-items-center rounded-full bg-blue-600 text-white"><Download className="size-5" /></button>
           </div>

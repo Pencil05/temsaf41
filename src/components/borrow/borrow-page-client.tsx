@@ -8,6 +8,7 @@ import {
   Download,
   FileImage,
   FileText,
+  Heart,
   Hash,
   PackageCheck,
   Search,
@@ -30,6 +31,7 @@ import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { EquipmentImage } from "@/components/equipment/equipment-image";
 import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
 import { useUnsavedDraft } from "@/hooks/use-unsaved-draft";
+import { fetchWithRetry } from "@/lib/client-request";
 
 type Toast = { type: "success" | "error"; message: string } | null;
 type QuantityValue = number | "";
@@ -53,6 +55,9 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const [toast, setToast] = useState<Toast>(null);
   const [receipt, setReceipt] = useState<BorrowReceipt | null>(null);
   const [reviewReceipt, setReviewReceipt] = useState<BorrowReceipt | null>(null);
+  const [requestMessage, setRequestMessage] = useState("กำลังส่งข้อมูลเข้าสู่ระบบ");
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [recentNames, setRecentNames] = useState<string[]>([]);
   const selfUse = borrowerCompanyId === data.ownerCompanyId;
   const categories = useMemo(() => [...new Set(data.inventory.map((item) => item.category).filter(Boolean))].sort((first, second) => first.localeCompare(second, "th")), [data.inventory]);
   const draftDirty = Object.keys(selected).length > 0 || Boolean(borrowerCompanyId || dueDate || note || evidenceImage);
@@ -87,8 +92,29 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
   const filteredInventory = useMemo(() => {
     const keyword = equipmentQuery.trim().toLocaleLowerCase("th");
     const matches = data.inventory.filter((item) => (!categoryFilter || item.category === categoryFilter) && (!keyword || `${item.name} ${item.category} ${item.plateNumber || ""}`.toLocaleLowerCase("th").includes(keyword)));
-    return [...matches].sort((first, second) => first.stockType.localeCompare(second.stockType) || first.name.localeCompare(second.name, "th"));
-  }, [categoryFilter, data.inventory, equipmentQuery]);
+    return [...matches].sort((first, second) => Number(favorites.includes(second.name)) - Number(favorites.includes(first.name)) || recentNames.indexOf(first.name) - recentNames.indexOf(second.name) || first.stockType.localeCompare(second.stockType) || first.name.localeCompare(second.name, "th"));
+  }, [categoryFilter, data.inventory, equipmentQuery, favorites, recentNames]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        setFavorites(JSON.parse(localStorage.getItem("tems-favorite-equipment") || "[]") as string[]);
+        setRecentNames(JSON.parse(localStorage.getItem("tems-recent-equipment") || "[]") as string[]);
+        const search = localStorage.getItem("tems-borrow-search");
+        if (search) { setEquipmentQuery(search); localStorage.removeItem("tems-borrow-search"); }
+        const repeatRaw = localStorage.getItem("tems-borrow-repeat");
+        if (repeatRaw) {
+          const repeat = JSON.parse(repeatRaw) as { items?: Array<{ name: string; quantity: number; plateNumber?: string }>; borrowerCompanyName?: string; note?: string };
+          const next: Record<string, QuantityValue> = {};
+          for (const previous of repeat.items || []) { const match = data.inventory.find((item) => item.name === previous.name && (!previous.plateNumber || item.plateNumber === previous.plateNumber) && item.available > 0); if (match) next[match.selectionId] = match.requirePlate ? 1 : Math.min(previous.quantity, match.available); }
+          setSelected(next); setBorrowerCompanyId(data.companies.find((company) => company.name === repeat.borrowerCompanyName)?.id || ""); setNote(repeat.note || "");
+          const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000); tomorrow.setMinutes(tomorrow.getMinutes() - tomorrow.getTimezoneOffset()); setDueDate(tomorrow.toISOString().slice(0, 16));
+          localStorage.removeItem("tems-borrow-repeat"); showToast("success", `เตรียมรายการเดิมให้แล้ว ${Object.keys(next).length} รายการ กรุณาตรวจสอบอีกครั้ง`);
+        }
+      } catch { localStorage.removeItem("tems-borrow-repeat"); }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [data.companies, data.inventory]);
 
   useEffect(() => {
     const guardLinks = (event: MouseEvent) => {
@@ -119,6 +145,11 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
       }
       return next;
     });
+    setRecentNames((current) => { const next = [item.name, ...current.filter((name) => name !== item.name)].slice(0, 8); localStorage.setItem("tems-recent-equipment", JSON.stringify(next)); return next; });
+  }
+
+  function toggleFavorite(name: string) {
+    setFavorites((current) => { const next = current.includes(name) ? current.filter((item) => item !== name) : [name, ...current]; localStorage.setItem("tems-favorite-equipment", JSON.stringify(next)); return next; });
   }
 
   function updateQuantity(item: BorrowInventoryItem, rawValue: string) {
@@ -219,7 +250,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
     if (!reviewReceipt) return;
     setIsSubmitting(true);
     try {
-      const response = await fetch("/api/borrow", {
+      const response = await fetchWithRetry("/api/borrow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -234,7 +265,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
             plateNumber: item.requirePlate ? item.plateNumber : undefined,
           })),
         }),
-      });
+      }, { onProgress: (progress) => setRequestMessage(progress.message) });
       const payload = (await response.json()) as { receipt?: BorrowReceipt; error?: string };
 
       if (response.status === 401) {
@@ -302,7 +333,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
 
   return (
     <main className="theme-app-page min-h-screen bg-[radial-gradient(circle_at_top,#dbeafe_0%,#f8fafc_42%,#eef2ff_100%)] pb-32 text-slate-900">
-      {(isSubmitting || isPreparingEvidence || isDownloading) && <ActionLoadingOverlay message={isPreparingEvidence ? "กำลังย่อและเตรียมรูปหลักฐาน..." : isDownloading ? "กำลังสร้างไฟล์ใบเสร็จ..." : "กำลังบันทึกการเบิก..."} />}
+      {(isSubmitting || isPreparingEvidence || isDownloading) && <ActionLoadingOverlay message={isPreparingEvidence ? "กำลังย่อและเตรียมรูปหลักฐาน..." : isDownloading ? "กำลังสร้างไฟล์ใบเสร็จ..." : requestMessage} />}
       {toast && (
         <div
           role="status"
@@ -358,7 +389,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                   return (
                     <article
                       key={item.selectionId}
-                      className={`equipment-selection-item overflow-hidden rounded-2xl border bg-white/75 shadow-[0_8px_22px_rgba(15,23,42,0.06)] transition ${
+                      className={`equipment-selection-item relative overflow-hidden rounded-2xl border bg-white/75 shadow-[0_8px_22px_rgba(15,23,42,0.06)] transition ${
                         relendingBlocked
                           ? "border-red-200 bg-red-50/70 opacity-70"
                           : isSelected
@@ -366,6 +397,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                           : "border-slate-200 hover:border-blue-200"
                       }`}
                     >
+                      <button type="button" onClick={() => toggleFavorite(item.name)} className={`absolute right-12 top-3 z-10 grid size-9 place-items-center rounded-xl transition ${favorites.includes(item.name) ? "bg-pink-100 text-pink-600" : "bg-slate-100 text-slate-400 hover:text-pink-500"}`} aria-label={favorites.includes(item.name) ? "นำออกจากรายการโปรด" : "เพิ่มเป็นรายการโปรด"}><Heart className="size-4" fill={favorites.includes(item.name) ? "currentColor" : "none"} /></button>
                       <button
                         type="button"
                         onClick={() => toggleItem(item)}

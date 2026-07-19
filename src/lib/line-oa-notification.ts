@@ -3,7 +3,7 @@ import "server-only";
 import { getLineNotificationRecipients } from "@/lib/account-service";
 
 export type LineActivityNotification = {
-  kind: "borrow" | "return" | "defect" | "admin";
+  kind: "borrow" | "return" | "defect" | "admin" | "reminder";
   actorName: string;
   ownerCompanyId?: string;
   ownerCompanyName: string;
@@ -24,6 +24,7 @@ const activityTitle = {
   return: "✅ แจ้งเตือนการคืนยุทโธปกรณ์",
   defect: "🛠️ แจ้งเตือนยุทโธปกรณ์ชำรุด",
   admin: "🛡️ กิจกรรมของผู้ดูแลระบบ",
+  reminder: "⏰ แจ้งเตือนใกล้ครบกำหนดคืน",
 };
 
 function formatDate(value: string) {
@@ -38,6 +39,8 @@ function buildMessage(notification: LineActivityNotification) {
     lines.push(`ต้นทาง: ${notification.ownerCompanyName}`, `ปลายทาง: ${notification.borrowerCompanyName || "ไม่ระบุกองร้อย"}`);
   } else if (notification.kind === "return") {
     lines.push(`คืนจาก: ${notification.borrowerCompanyName || "ไม่ระบุกองร้อย"}`, `คืนให้: ${notification.ownerCompanyName}`);
+  } else if (notification.kind === "reminder") {
+    lines.push(`ผู้ครอบครอง: ${notification.borrowerCompanyName || "ไม่ระบุกองร้อย"}`, `เจ้าของ: ${notification.ownerCompanyName}`);
   } else {
     lines.push(`กองร้อย: ${notification.ownerCompanyName}`);
   }

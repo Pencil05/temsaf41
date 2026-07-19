@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { History, ChevronRight } from "lucide-react";
+import { History, ChevronRight, ListTodo } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
@@ -74,6 +74,11 @@ export default async function UserDashboardPage({
           <div className="mt-4">
             <ActivityFeed activities={dashboard.activities} />
           </div>
+          <Link href="/user/my-items" className="mt-4 flex items-center gap-3 rounded-2xl border border-violet-100 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-violet-300">
+            <span className="grid size-11 place-items-center rounded-xl bg-violet-100 text-violet-600"><ListTodo className="size-5" /></span>
+            <span className="min-w-0 flex-1"><span className="block font-bold text-slate-800">ศูนย์รายการของฉัน</span><span className="mt-1 block text-xs text-slate-500">ติดตามกำหนดคืน รายการโปรด และสิ่งที่ใช้ล่าสุด</span></span>
+            <ChevronRight className="size-5 text-slate-400" />
+          </Link>
           <Link href="/user/history" className="mt-4 flex items-center gap-3 rounded-2xl border border-blue-100 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-blue-300">
             <span className="grid size-11 place-items-center rounded-xl bg-blue-100 text-blue-600"><History className="size-5" /></span>
             <span className="min-w-0 flex-1"><span className="block font-bold text-slate-800">ประวัติการเบิก / คืนยุทโธปกรณ์</span><span className="mt-1 block text-xs text-slate-500">ดูรายการทั้งหมดและสถานะการคืน</span></span>

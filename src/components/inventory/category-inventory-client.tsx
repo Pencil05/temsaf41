@@ -20,6 +20,8 @@ import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { EquipmentImage } from "@/components/equipment/equipment-image";
 import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
 import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
+import { useUnsavedDraft } from "@/hooks/use-unsaved-draft";
+import { fetchWithRetry } from "@/lib/client-request";
 import type {
   BorrowReceipt,
   CategoryInventoryData,
@@ -46,7 +48,9 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
   const [isPreparingEvidence, setIsPreparingEvidence] = useState(false);
   const [isProcessingReceipt, setIsProcessingReceipt] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
+  const [requestMessage, setRequestMessage] = useState("กำลังส่งข้อมูลเข้าสู่ระบบ");
   const selfUse = companyId === data.ownerCompanyId;
+  const { clearDraft } = useUnsavedDraft({ storageKey: `tems-single-borrow-draft:${data.category}`, value: { selectionId: activeItem?.selectionId || "", quantity, companyId, dueDate, note, evidenceName, evidenceImage }, dirty: Boolean(activeItem || companyId || dueDate || note || evidenceImage), onRestore: (draft) => { setActiveItem(data.inventory.find((item) => item.selectionId === draft.selectionId) || null); setQuantity(draft.quantity || 1); setCompanyId(draft.companyId || ""); setDueDate(draft.dueDate || ""); setNote(draft.note || ""); setEvidenceName(draft.evidenceName || ""); setEvidenceImage(draft.evidenceImage || ""); } });
   usePopupDismiss(Boolean(activeItem) && !reviewReceipt && !receipt, () => setActiveItem(null));
   usePopupDismiss(Boolean(reviewReceipt), () => setReviewReceipt(null));
   usePopupDismiss(Boolean(receipt) && !downloadMenuOpen, () => setReceipt(null));
@@ -142,7 +146,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
     const requestedQuantity = Number(quantity);
     setIsSubmitting(true);
     try {
-      const response = await fetch("/api/borrow", {
+      const response = await fetchWithRetry("/api/borrow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -157,7 +161,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
             plateNumber: activeItem.requirePlate ? activeItem.plateNumber : undefined,
           }],
         }),
-      });
+      }, { onProgress: (progress) => setRequestMessage(progress.message) });
       const payload = (await response.json()) as { receipt?: BorrowReceipt; error?: string };
 
       if (!response.ok || !payload.receipt) {
@@ -166,6 +170,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
       }
 
       setActiveItem(null);
+      clearDraft();
       setReviewReceipt(null);
       setReceipt(payload.receipt);
       showToast("success", "บันทึกการเบิกเรียบร้อยแล้ว");
@@ -222,7 +227,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 sm:py-8">
-      {(isSubmitting || isPreparingEvidence || isProcessingReceipt) && <ActionLoadingOverlay message={isPreparingEvidence ? "กำลังเตรียมรูปหลักฐาน..." : isProcessingReceipt ? "กำลังสร้างไฟล์ใบเสร็จ..." : "กำลังบันทึกการเบิกและปรับยอดคลัง..."} />}
+      {(isSubmitting || isPreparingEvidence || isProcessingReceipt) && <ActionLoadingOverlay message={isPreparingEvidence ? "กำลังเตรียมรูปหลักฐาน..." : isProcessingReceipt ? "กำลังสร้างไฟล์ใบเสร็จ..." : requestMessage} />}
       {toast && (
         <div className={`fixed left-4 right-4 top-4 z-[100] mx-auto flex max-w-md items-center gap-3 rounded-2xl border px-4 py-3 text-sm shadow-xl ${toast.type === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
           {toast.type === "error" ? <X className="size-5" /> : <CheckCircle2 className="size-5" />}

@@ -6,6 +6,7 @@ import {
   submitBorrowRequest,
   type BorrowRequestInput,
 } from "@/lib/borrow-service";
+import { withIdempotency } from "@/lib/idempotency";
 
 export async function POST(request: Request) {
   const cookieStore = await cookies();
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
 
   try {
     const payload = (await request.json()) as BorrowRequestInput;
-    const receipt = await submitBorrowRequest(user, payload);
+    const receipt = await withIdempotency(request.headers.get("X-TEMS-Request-ID"), () => submitBorrowRequest(user, payload));
     return NextResponse.json({ receipt }, { status: 201 });
   } catch (error) {
     if (error instanceof BorrowValidationError) {

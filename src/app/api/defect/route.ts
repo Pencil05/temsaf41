@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { readSessionValue, SESSION_COOKIE_NAME } from "@/lib/auth-session";
 import { InventoryActionError, reportDefect } from "@/lib/inventory-action-service";
+import { withIdempotency } from "@/lib/idempotency";
 
 export async function POST(request: Request) {
   const user = readSessionValue((await cookies()).get(SESSION_COOKIE_NAME)?.value);
@@ -16,7 +17,7 @@ export async function POST(request: Request) {
       note?: string;
       evidenceImage?: string;
     };
-    return NextResponse.json(await reportDefect(user, input));
+    return NextResponse.json(await withIdempotency(request.headers.get("X-TEMS-Request-ID"), () => reportDefect(user, input)));
   } catch (error) {
     if (error instanceof InventoryActionError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
