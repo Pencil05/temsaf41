@@ -151,7 +151,7 @@ export function CategoryInventoryClient({ data, initialEquipment = "" }: { data:
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           borrowerCompanyId: companyId,
-          dueDate,
+          dueDate: reviewReceipt.dueDate,
           note,
           evidenceName,
           evidenceImage,

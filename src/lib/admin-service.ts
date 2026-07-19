@@ -99,7 +99,7 @@ function resolvedAuditDetails(raw: string, companyNames: Map<string, string>, in
   if (!raw) return "ไม่มีรายละเอียดเพิ่มเติม";
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มรายการเข้าคลัง", "batch-add-inventory": "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "save-category": "จัดการหมวดหมู่ยุทโธปกรณ์", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์" };
+    const actionNames: Record<string, string> = { "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "save-inventory": "จัดการอาวุธในคลัง", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มรายการเข้าคลัง", "batch-add-inventory": "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", "delete-inventory": "ลบรายการออกจากคลัง", "save-user": "จัดการผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน", "delete-company": "ลบกองร้อย", "save-category": "จัดการหมวดหมู่ยุทโธปกรณ์", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์", "report-defect": "แจ้งยุทโธปกรณ์ชำรุด", "maintenance-status": "อัปเดตสถานะซ่อม", "dispose-maintenance": "จำหน่ายยุทโธปกรณ์", "delete-maintenance-history": "ล้างประวัติซ่อมเสร็จ" };
     return Object.entries(parsed).filter(([key]) => !["picture", "evidenceImage"].includes(key) && !key.toLowerCase().includes("password")).map(([key, rawValue]) => {
       const value = String(rawValue || "-");
       if (key === "action") return `คำสั่ง: ${actionNames[value] || value}`;
@@ -649,6 +649,17 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       rangesToClear = rangesForRows(transactionSource, selectedRows.map((row) => row.rowNumber));
       target = selectedRows.length === 1 ? field(selectedRows[0].record, "Tx_ID") : `TRANSACTION_HISTORY:${selectedRows.length}`;
       auditContext = { quantity: String(selectedRows.length), scope: input.all === true ? "ประวัติที่ปิดงานแล้วทั้งหมด" : "รายการที่เลือก" };
+    } else if (action === "delete-maintenance-history") {
+      const requestedIds = new Set((Array.isArray(input.ids) ? input.ids : [input.id]).map(String).filter(Boolean));
+      const isClosed = ({ record }: RecordRow) => ["completed", "disposed", "rejected"].includes(field(record, "Status").toLowerCase());
+      const selectedRows = input.all === true
+        ? maintenance.rows.filter(isClosed)
+        : maintenance.rows.filter(({ record }) => requestedIds.has(field(record, "Maint_ID", "Maintenance_ID", "ID")));
+      if (!selectedRows.length) throw new Error("ไม่พบประวัติซ่อมเสร็จที่สามารถลบได้");
+      if (selectedRows.some((row) => !isClosed(row))) throw new Error("ลบได้เฉพาะรายการซ่อมที่ปิดงานแล้วเท่านั้น");
+      rangesToClear = rangesForRows(maintenance, selectedRows.map((row) => row.rowNumber));
+      target = selectedRows.length === 1 ? field(selectedRows[0].record, "Maint_ID", "Maintenance_ID", "ID") : `MAINTENANCE_HISTORY:${selectedRows.length}`;
+      auditContext = { quantity: String(selectedRows.length), scope: input.all === true ? "ประวัติซ่อมที่ปิดงานแล้วทั้งหมด" : "รายการที่เลือก" };
     } else if (action === "report-defect") {
       const inventory = inventories.rows.find(({ record }) => field(record, "Inv_ID") === String(input.inventoryId || input.id || ""));
       if (!inventory) throw new Error("ไม่พบยุทโธปกรณ์ในคลังที่ต้องการแจ้งเสีย");
@@ -692,7 +703,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       if (notificationInventory) {
         const equipmentId = field(row.record, "Equip_ID") || field(notificationInventory.record, "Equip_ID");
         const companyId = field(notificationInventory.record, "Company_ID");
-        const statusLabel: Record<string, string> = { reported: "แจ้งเสีย", inspecting: "กำลังตรวจสอบ", inprogress: "กำลังดำเนินการ", completed: "ซ่อมเสร็จแล้ว", rejected: "ไม่รับรายการแจ้งเสีย", disposed: "จำหน่ายแล้ว" };
+        const statusLabel: Record<string, string> = { reported: "แจ้งเสีย", inspecting: "กำลังตรวจสอบ", inprogress: "กำลังดำเนินการ", completed: "ซ่อมเสร็จแล้ว", rejected: "ถูกปฏิเสธ", disposed: "จำหน่ายแล้ว" };
         lineNotification = { kind: "defect", actorName: [admin.rank, admin.firstName, admin.lastName].filter(Boolean).join(" ") || admin.email, ownerCompanyId: companyId, ownerCompanyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === companyId)?.record || {}, "Company_Name") || companyId, referenceId: target, occurredAt: new Date().toISOString(), note: `อัปเดตสถานะซ่อม: ${statusLabel[nextStatus.toLowerCase().replace(/[\s_-]/g, "")] || nextStatus}`, items: [{ name: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === equipmentId)?.record || {}, "Equip_Name") || "ไม่ระบุชื่อยุทโธปกรณ์", quantity: number(row.record, "Qty"), plateNumber: field(notificationInventory.record, "Plate_Number") }] };
       }
     } else if (action === "dispose-maintenance") {
@@ -725,7 +736,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
         "save-company": "บันทึกข้อมูลกองร้อย", "delete-company": "ลบกองร้อย", "save-user": "บันทึกผู้ใช้งาน", "delete-user": "ลบผู้ใช้งาน",
         "save-equipment": "บันทึกยุทโธปกรณ์", "save-category": "บันทึกหมวดหมู่ยุทโธปกรณ์", "delete-equipment": "ลบชนิดยุทโธปกรณ์", "delete-equipment-category": "ลบหมวดหมู่ยุทโธปกรณ์",
         "save-inventory": "แก้ไขคลังยุทโธปกรณ์", "batch-adjust-inventory": "ปรับจำนวนยุทโธปกรณ์หลายรายการ", "add-inventory": "เพิ่มยุทโธปกรณ์เข้าคลัง", "batch-add-inventory": "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์",
-        "delete-inventory": "ลบรายการคลัง", "delete-transaction-history": "ล้างประวัติเบิกคืน",
+        "delete-inventory": "ลบรายการคลัง", "delete-transaction-history": "ล้างประวัติเบิกคืน", "delete-maintenance-history": "ล้างประวัติซ่อมเสร็จ",
       };
       lineNotification = { kind: "admin", actorName: [admin.rank, admin.firstName, admin.lastName].filter(Boolean).join(" ") || admin.email, ownerCompanyName: auditContext.companyName || "ส่วนกลาง", referenceId: target, occurredAt: new Date().toISOString(), note: actionLabels[action] || action, adminOnly: true, items: auditContext.equipmentName ? [{ name: auditContext.equipmentName, quantity: Number(auditContext.quantity) || 1, plateNumber: auditContext.plateNumber }] : [] };
     }

@@ -6,7 +6,6 @@ import { AlertTriangle, Check, CheckCircle2, ClipboardCheck, Clock3, Database, D
 import type { AdminData } from "@/lib/admin-service";
 import type { AdminOperationsData, ReportSchedule } from "@/lib/admin-operations-service";
 import { CompactSelect } from "@/components/ui/compact-select";
-import { receiptCanvas } from "@/lib/client-media";
 
 type View = "approvals" | "anomalies" | "sheets" | "reports" | "count" | "undo";
 type Props = { data: AdminData; operations: AdminOperationsData; notify: (message: string) => void };
@@ -101,9 +100,8 @@ function ReportCenter({ data, operations, busy, saveSchedule }: { data: AdminDat
   const maintenance = data.maintenance.filter((item) => inRange(item.completedAt || item.date, period.start, period.end));
   const total = data.inventories.reduce((sum, item) => sum + item.total, 0);
   async function download() {
-    if (!reportRef.current) return;
     setDownloading(true);
-    try { const canvas = await receiptCanvas(reportRef.current); const { jsPDF } = await import("jspdf"); const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" }); const width = 186; const height = canvas.height * width / canvas.width; let offset = 10; const image = canvas.toDataURL("image/jpeg", .94); while (offset > -height) { pdf.addImage(image, "JPEG", 12, offset, width, height); offset -= 277; if (offset > -height) pdf.addPage(); } pdf.save(`TEMS-${frequency}-${new Date().toISOString().slice(0, 10)}.pdf`); } finally { setDownloading(false); }
+    try { const canvas = renderAdminReportCanvas(data, transactions, maintenance, frequency, period); const { jsPDF } = await import("jspdf"); const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" }); const width = 186; const pageHeight = 277; const height = canvas.height * width / canvas.width; let offset = 10; const image = canvas.toDataURL("image/jpeg", .94); while (offset > -height) { pdf.addImage(image, "JPEG", 12, offset, width, height); offset -= pageHeight; if (offset > -height) pdf.addPage(); } pdf.save(`TEMS-${frequency}-${new Date().toISOString().slice(0, 10)}.pdf`); } finally { setDownloading(false); }
   }
   function chooseFrequency(value: string) { const next = value as ReportSchedule["frequency"]; const saved = operations.schedules.find((item) => item.frequency === next); setFrequency(next); setDay(String(saved?.day ?? 1)); setEnabled(saved?.enabled ?? false); }
   return <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_360px]"><div><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><CompactSelect value={frequency} onChange={chooseFrequency} className="w-full sm:w-56" options={[{ value: "daily", label: "รายงานประจำวัน" }, { value: "weekly", label: "รายงานประจำสัปดาห์" }, { value: "monthly", label: "รายงานประจำเดือน" }]} /><button type="button" onClick={download} disabled={downloading} className="flex h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-bold text-white disabled:opacity-50"><Download className="size-4" />{downloading ? "กำลังสร้าง PDF..." : "ดาวน์โหลด PDF"}</button></div><div ref={reportRef} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="border-b-2 border-blue-600 pb-4"><p className="text-xs font-bold tracking-[.2em] text-blue-600">TEMS OFFICIAL REPORT</p><h3 className="mt-2 text-2xl font-bold">รายงานสรุป{frequency === "daily" ? "ประจำวัน" : frequency === "weekly" ? "ประจำสัปดาห์" : "ประจำเดือน"}</h3><p className="mt-1 text-sm text-slate-500">ช่วงข้อมูล {formatDate(period.start.toISOString())} – {formatDate(period.end.toISOString())}</p></div><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><ReportMetric label="ยุทโธปกรณ์รวม" value={total} /><ReportMetric label="พร้อมใช้" value={data.inventories.reduce((sum, item) => sum + item.available, 0)} /><ReportMetric label="รายการเบิก/คืน" value={transactions.length} /><ReportMetric label="งานซ่อม" value={maintenance.length} /></div><ReportTable title="สรุปตามกองร้อย" rows={data.companies.map((company) => [company.name, company.total, company.available, company.borrowed, company.broken])} headers={["กองร้อย", "รวม", "พร้อมใช้", "ยืม", "ชำรุด"]} /><ReportTable title="ความเคลื่อนไหวในช่วงรายงาน" rows={transactions.slice(0, 30).map((item) => [item.equipmentName, item.quantity, `${item.owner} → ${item.borrower}`, statusThai(item.status)])} headers={["ยุทโธปกรณ์", "จำนวน", "เส้นทาง", "สถานะ"]} /><p className="mt-6 border-t border-slate-200 pt-3 text-xs text-slate-400">สร้างโดยระบบ TEMS เมื่อ {formatDate(new Date().toISOString())}</p></div></div><aside className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4"><div className="flex items-center gap-2"><Send className="size-5 text-blue-600" /><h4 className="font-bold">ส่งสรุปเข้า LINE OA</h4></div><p className="mt-1 text-sm leading-6 text-slate-500">บัญชี Vercel Hobby จะส่งข้อความสรุปวันละครั้ง เวลาประมาณ 08:05 น.</p><div className="mt-4 space-y-3"><div className="rounded-xl border border-slate-200 bg-white p-3"><span className="block text-sm font-semibold">เวลาส่งอัตโนมัติ</span><span className="mt-1 block text-lg font-bold text-blue-700">08:05 น.</span></div>{frequency !== "daily" && <label className="block"><span className="mb-1 block text-sm font-semibold">{frequency === "weekly" ? "วันในสัปดาห์" : "วันที่ของเดือน"}</span>{frequency === "weekly" ? <select value={day} onChange={(event) => setDay(event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3">{[[1,"จันทร์"],[2,"อังคาร"],[3,"พุธ"],[4,"พฤหัสบดี"],[5,"ศุกร์"],[6,"เสาร์"],[0,"อาทิตย์"]].map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select> : <input type="number" min={1} max={28} value={day} onChange={(event) => setDay(event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3" />}</label>}<label className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3"><span><span className="block text-sm font-bold">เปิดส่งอัตโนมัติ</span><span className="text-xs text-slate-500">{existing?.lastSentKey ? `ส่งล่าสุดรอบ ${existing.lastSentKey}` : "ยังไม่เคยส่ง"}</span></span><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="size-5 accent-blue-600" /></label><button type="button" disabled={Boolean(busy)} onClick={() => saveSchedule({ frequency, hour: Number(hour), day: Number(day), enabled })} className="h-11 w-full rounded-xl bg-blue-600 font-bold text-white disabled:opacity-50">บันทึกตารางส่ง</button></div></aside></div>;
@@ -137,3 +135,46 @@ function statusThai(status: string) { return ({ borrowed: "กำลังยื
 function countStatus(status: string) { return ({ verified: "ยอดตรง", pending: "รออนุมัติ", adjusted: "ปรับยอดแล้ว", rejected: "ไม่อนุมัติ" } as Record<string, string>)[status.toLowerCase()] || status; }
 function remaining(expiresAt: string) { const milliseconds = Math.max(0, Date.parse(expiresAt) - Date.now()); return `${Math.floor(milliseconds / 60000)} นาที`; }
 function adminAction(action: string) { return ({ "save-company": "แก้ไขกองร้อย", "delete-company": "ลบกองร้อย", "save-user": "แก้ไขผู้ใช้", "delete-user": "ลบผู้ใช้", "save-equipment": "แก้ไขยุทโธปกรณ์", "save-category": "แก้ไขหมวดหมู่", "save-inventory": "แก้ไขคลัง", "add-inventory": "เพิ่มรายการเข้าคลัง", "batch-add-inventory": "เพิ่มหลายรายการเข้าคลัง", "batch-adjust-inventory": "ปรับหลายรายการในคลัง", "transfer-inventory": "เคลื่อนย้ายยุทโธปกรณ์", "return-transaction": "คืนยุทโธปกรณ์", "maintenance-status": "เปลี่ยนสถานะซ่อม" } as Record<string, string>)[action] || action; }
+
+function renderAdminReportCanvas(data: AdminData, transactions: AdminData["transactions"], maintenance: AdminData["maintenance"], frequency: ReportSchedule["frequency"], period: { start: Date; end: Date }) {
+  const rowHeight = 42;
+  const height = Math.max(1754, 690 + data.companies.length * rowHeight + Math.min(transactions.length, 30) * rowHeight);
+  const canvas = document.createElement("canvas");
+  canvas.width = 1240;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("ไม่สามารถสร้างรายงาน PDF ได้");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const text = (value: string, x: number, y: number, font = "400 22px Kanit, sans-serif", color = "#334155") => { context.font = font; context.fillStyle = color; context.fillText(value, x, y); };
+  const line = (y: number, color = "#dbeafe") => { context.strokeStyle = color; context.lineWidth = 2; context.beginPath(); context.moveTo(70, y); context.lineTo(1170, y); context.stroke(); };
+  const reportLabel = frequency === "daily" ? "ประจำวัน" : frequency === "weekly" ? "ประจำสัปดาห์" : "ประจำเดือน";
+  text("TEMS • TACTICAL EQUIPMENT MANAGEMENT SYSTEM", 70, 75, "700 20px Kanit, sans-serif", "#2563eb");
+  text(`รายงานสรุป${reportLabel}`, 70, 130, "700 42px Kanit, sans-serif", "#0f172a");
+  text(`ช่วงข้อมูล ${formatDate(period.start.toISOString())} – ${formatDate(period.end.toISOString())}`, 70, 172, "400 20px Kanit, sans-serif", "#64748b");
+  line(205, "#2563eb");
+  const metrics = [
+    ["ยุทโธปกรณ์รวม", data.inventories.reduce((sum, item) => sum + item.total, 0)],
+    ["พร้อมใช้", data.inventories.reduce((sum, item) => sum + item.available, 0)],
+    ["รายการเบิก/คืน", transactions.length],
+    ["งานซ่อม", maintenance.length],
+  ] as const;
+  metrics.forEach(([label, value], index) => { const x = 70 + index * 275; context.fillStyle = "#eff6ff"; context.fillRect(x, 235, 245, 105); text(label, x + 18, 270, "500 18px Kanit, sans-serif", "#64748b"); text(value.toLocaleString("th-TH"), x + 18, 318, "700 34px Kanit, sans-serif", "#1d4ed8"); });
+  let y = 400;
+  text("สรุปตามกองร้อย", 70, y, "700 28px Kanit, sans-serif", "#0f172a");
+  y += 34;
+  context.fillStyle = "#dbeafe"; context.fillRect(70, y, 1100, rowHeight);
+  [["กองร้อย", 90], ["รวม", 720], ["พร้อมใช้", 840], ["ยืม", 970], ["ชำรุด", 1070]].forEach(([label, x]) => text(String(label), Number(x), y + 28, "700 18px Kanit, sans-serif", "#1e3a8a"));
+  y += rowHeight;
+  data.companies.forEach((company, index) => { if (index % 2) { context.fillStyle = "#f8fafc"; context.fillRect(70, y, 1100, rowHeight); } text(company.name, 90, y + 28, "500 18px Kanit, sans-serif", "#0f172a"); text(String(company.total), 720, y + 28); text(String(company.available), 840, y + 28); text(String(company.borrowed), 970, y + 28); text(String(company.broken), 1070, y + 28); y += rowHeight; });
+  y += 55;
+  text("ความเคลื่อนไหวในช่วงรายงาน", 70, y, "700 28px Kanit, sans-serif", "#0f172a");
+  y += 34;
+  context.fillStyle = "#dbeafe"; context.fillRect(70, y, 1100, rowHeight);
+  [["ยุทโธปกรณ์", 90], ["จำนวน", 610], ["ต้นทาง → ปลายทาง", 730], ["สถานะ", 1050]].forEach(([label, x]) => text(String(label), Number(x), y + 28, "700 18px Kanit, sans-serif", "#1e3a8a"));
+  y += rowHeight;
+  transactions.slice(0, 30).forEach((item, index) => { if (index % 2) { context.fillStyle = "#f8fafc"; context.fillRect(70, y, 1100, rowHeight); } text(item.equipmentName.slice(0, 36), 90, y + 28, "500 17px Kanit, sans-serif", "#0f172a"); text(String(item.quantity), 610, y + 28); text(`${item.owner} → ${item.borrower}`.slice(0, 34), 730, y + 28, "400 16px Kanit, sans-serif"); text(statusThai(item.status), 1050, y + 28, "500 16px Kanit, sans-serif", "#1d4ed8"); y += rowHeight; });
+  if (!transactions.length) text("ไม่มีความเคลื่อนไหวในช่วงรายงาน", 90, y + 30, "400 18px Kanit, sans-serif", "#94a3b8");
+  text(`สร้างโดยระบบ TEMS เมื่อ ${formatDate(new Date().toISOString())}`, 70, canvas.height - 55, "400 16px Kanit, sans-serif", "#94a3b8");
+  return canvas;
+}

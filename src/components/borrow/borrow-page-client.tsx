@@ -109,7 +109,9 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
           for (const previous of repeat.items || []) { const match = data.inventory.find((item) => item.name === previous.name && (!previous.plateNumber || item.plateNumber === previous.plateNumber) && item.available > 0); if (match) next[match.selectionId] = match.requirePlate ? 1 : Math.min(previous.quantity, match.available); }
           setSelected(next); setBorrowerCompanyId(data.companies.find((company) => company.name === repeat.borrowerCompanyName)?.id || ""); setNote(repeat.note || "");
           const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000); tomorrow.setMinutes(tomorrow.getMinutes() - tomorrow.getTimezoneOffset()); setDueDate(tomorrow.toISOString().slice(0, 16));
-          localStorage.removeItem("tems-borrow-repeat"); showToast("success", `เตรียมรายการเดิมให้แล้ว ${Object.keys(next).length} รายการ กรุณาตรวจสอบอีกครั้ง`);
+          localStorage.removeItem("tems-borrow-repeat");
+          if (Object.keys(next).length) showToast("success", `เตรียมรายการเดิมให้แล้ว ${Object.keys(next).length} รายการ กรุณาตรวจสอบอีกครั้ง`);
+          else showToast("error", "ไม่สามารถทำรายการซ้ำได้ เนื่องจากไม่มียอดพร้อมเบิกหรือยอดคงเหลือเป็น 0");
         }
       } catch { localStorage.removeItem("tems-borrow-repeat"); }
     }, 0);
@@ -255,7 +257,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           borrowerCompanyId,
-          dueDate,
+          dueDate: reviewReceipt.dueDate,
           note,
           evidenceName,
           evidenceImage,

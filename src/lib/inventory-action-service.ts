@@ -250,9 +250,12 @@ export async function getDashboardActionData(user: SessionUser): Promise<Dashboa
       picture: equipmentPictures.get(equipmentId) || "",
     };
   });
-  const defects: DashboardActionData["defects"] = inventories.rows.filter(({ record }) =>
-    value(record, "Company_ID", "CompanyId") === user.companyId,
-  ).map((row) => {
+  const defects: DashboardActionData["defects"] = inventories.rows.filter(({ record }) => {
+    const companyId = value(record, "Company_ID", "CompanyId");
+    const assetOwnerCompanyId = value(record, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID");
+    const stockStatus = value(record, "Stock_Status", "Inventory_Status").toLowerCase();
+    return companyId === user.companyId && (!assetOwnerCompanyId || assetOwnerCompanyId === companyId) && stockStatus !== "borrowed" && numberValue(record, "Qty_Total", "Total_Quantity") > 0;
+  }).map((row) => {
     const equipmentId = value(row.record, "Equip_ID", "Equipment_ID", "EquipId");
     const plateNumber = value(row.record, "Plate_Number", "PlateNumber");
     return {
@@ -329,7 +332,11 @@ export async function returnEquipment(
       const companyId = value(item.row.record, "Company_ID", "CompanyId");
       const assetOwnerCompanyId = value(item.row.record, "Asset_Owner_Company_ID", "Stock_Owner_Company_ID", "Original_Owner_Company_ID");
       if (assetOwnerCompanyId && assetOwnerCompanyId !== companyId) {
-        updates.push(cell(inventories, item.row.rowNumber, column(inventories.headers, "Stock_Status", "Inventory_Status"), total > 0 ? "Borrowed" : "Returned"));
+        if (total === 0) {
+          updates.push({ range: `'${inventories.name}'!A${item.row.rowNumber}:${letter(inventories.headers.length - 1)}${item.row.rowNumber}`, values: [inventories.headers.map(() => "")] });
+        } else {
+          updates.push(cell(inventories, item.row.rowNumber, column(inventories.headers, "Stock_Status", "Inventory_Status"), "Borrowed"));
+        }
       }
     }
     const now = new Date().toISOString();
