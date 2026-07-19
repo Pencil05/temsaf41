@@ -87,6 +87,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { ReceiptDocument } from "@/components/receipt/receipt-document";
 import { AdminAiAssistant } from "@/components/admin/admin-ai-assistant";
+import { AdminOperationsPanel } from "@/components/admin/admin-operations-panel";
 import { ActionLoadingOverlay } from "@/components/ui/action-loading-overlay";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { CompactSelect, type CompactSelectOption } from "@/components/ui/compact-select";
@@ -94,12 +95,14 @@ import { compressImageForSheet, receiptCanvas } from "@/lib/client-media";
 import { usePopupDismiss } from "@/hooks/use-popup-dismiss";
 import { useUnsavedDraft } from "@/hooks/use-unsaved-draft";
 import type { AdminAuditLog, AdminData, AdminMaintenance, AdminTransaction } from "@/lib/admin-service";
+import type { AdminOperationsData } from "@/lib/admin-operations-service";
 
-type Tab = "overview" | "users" | "equipment" | "inventory" | "transactions" | "maintenance" | "logs";
+type Tab = "overview" | "operations" | "users" | "equipment" | "inventory" | "transactions" | "maintenance" | "logs";
 type Modal = { type: "company" | "user" | "equipment" | "category" | "inventory" | "inventory-add" | "inventory-batch-add" | "transfer"; item?: Record<string, unknown> } | null;
 
 const tabs: Array<{ id: Tab; label: string; Icon: typeof Boxes }> = [
   { id: "overview", label: "ภาพรวม", Icon: Boxes },
+  { id: "operations", label: "ศูนย์ปฏิบัติการ", Icon: TowerControl },
   { id: "users", label: "ผู้ใช้งาน", Icon: Users },
   { id: "equipment", label: "บัญชียุทโธปกรณ์", Icon: ClipboardList },
   { id: "inventory", label: "คลังทั้งหมด", Icon: Database },
@@ -108,7 +111,7 @@ const tabs: Array<{ id: Tab; label: string; Icon: typeof Boxes }> = [
   { id: "logs", label: "Audit Log", Icon: ShieldCheck },
 ];
 
-export function AdminConsole({ initialData, adminName }: { initialData: AdminData; adminName: string }) {
+export function AdminConsole({ initialData, initialOperations, adminName }: { initialData: AdminData; initialOperations: AdminOperationsData; adminName: string }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("overview");
   const [query, setQuery] = useState("");
@@ -158,7 +161,7 @@ export function AdminConsole({ initialData, adminName }: { initialData: AdminDat
     users: initialData.users.filter((item) => match(item.firstName, item.lastName, item.email, item.rank, item.companyName)),
     inventories: initialData.inventories.filter((item) => (!inventoryCompany || item.companyId === inventoryCompany) && match(item.equipmentName, item.category, item.companyName, item.plateNumber)),
     transactions: initialData.transactions.filter((item) => (!transactionCompany || item.ownerCompanyId === transactionCompany || item.borrowerCompanyId === transactionCompany) && (!transactionDate || localDateKey(item.returnDate || item.date) === transactionDate) && match(item.id, item.equipmentName, item.owner, item.borrower, item.operator, item.status)),
-    maintenance: initialData.maintenance.filter((item) => (!maintenanceCompany || item.companyId === maintenanceCompany) && (!maintenanceDate || localDateKey(item.completedAt || item.date) === maintenanceDate) && (maintenanceView === "history" ? ["completed", "disposed"].includes(item.status.toLowerCase()) : !["completed", "disposed"].includes(item.status.toLowerCase())) && match(item.id, item.equipmentName, item.companyName, item.operator, item.status, item.note)),
+    maintenance: initialData.maintenance.filter((item) => (!maintenanceCompany || item.companyId === maintenanceCompany) && (!maintenanceDate || localDateKey(item.completedAt || item.date) === maintenanceDate) && (maintenanceView === "history" ? ["completed", "disposed", "rejected"].includes(item.status.toLowerCase()) : !["completed", "disposed", "rejected"].includes(item.status.toLowerCase())) && match(item.id, item.equipmentName, item.companyName, item.operator, item.status, item.note)),
     logs: initialData.logs.filter((item) => (!logCompany || item.companyIds.includes(logCompany)) && (!logDate || localDateKey(item.timestamp) === logDate) && match(item.id, item.user, item.action, item.target, item.targetLabel, item.details)),
   }), [initialData, inventoryCompany, logCompany, logDate, maintenanceCompany, maintenanceDate, maintenanceView, match, transactionCompany, transactionDate]);
   const visibleSelectedInventoryIds = useMemo(() => {
@@ -244,6 +247,7 @@ export function AdminConsole({ initialData, adminName }: { initialData: AdminDat
 
           {tab === "overview" && <CompanyGrid data={initialData} onSelect={setCompanyDetail} onAdd={() => setModal({ type: "company" })} />}
           {tab === "overview" && <Overview data={initialData} onEquipment={() => setEquipmentSummary(true)} onUsers={() => setTab("users")} onBorrowed={() => setBorrowedSummary(true)} onMaintenance={() => setTab("maintenance")} />}
+          {tab === "operations" && <AdminOperationsPanel data={initialData} operations={initialOperations} notify={setMessage} />}
           {tab === "users" && <Section title={`ผู้ใช้ทั้งหมด ${initialData.users.length.toLocaleString("th-TH")} คน`} action="เพิ่มผู้ใช้" onAdd={() => setModal({ type: "user" })}><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filtered.users.map((item) => <Card key={item.id} onClick={() => setModal({ type: "user", item: item as unknown as Record<string, unknown> })} title={`${item.rank} ${item.firstName} ${item.lastName}`} detail={`${item.role} · ${item.companyName}`} meta={`${item.email} · ${item.phone || "ไม่มีเบอร์"}`} />)}</div></Section>}
           {tab === "equipment" && <Section title="บัญชียุทโธปกรณ์แม่"><EquipmentCatalog items={initialData.equipments.filter((item) => match(item.name, item.category))} onAdd={() => setModal({ type: "equipment" })} onManageCategories={() => setCategoryManagerOpen(true)} onEdit={(item) => setModal({ type: "equipment", item: item as unknown as Record<string, unknown> })} /></Section>}
 
@@ -465,7 +469,7 @@ function groupRecordsByDate<T>(items: T[], getDate: (item: T) => string) {
   return [...groups].map(([key, records]) => ({ key, label: key === "unknown" ? "ไม่ระบุวันที่" : new Intl.DateTimeFormat("th-TH", { dateStyle: "long" }).format(new Date(getDate(records[0]))), records }));
 }
 
-function maintenanceStatus(status: string) { return ({ reported: "แจ้งเสีย", inspecting: "กำลังตรวจสอบ", repairing: "กำลังดำเนินการ", completed: "ซ่อมเสร็จแล้ว", disposed: "จำหน่ายแล้ว" } as Record<string, string>)[status.toLowerCase()] || status; }
+function maintenanceStatus(status: string) { return ({ reported: "แจ้งเสีย", inspecting: "กำลังตรวจสอบ", repairing: "กำลังดำเนินการ", completed: "ซ่อมเสร็จแล้ว", rejected: "ไม่รับรายการแจ้งเสีย", disposed: "จำหน่ายแล้ว" } as Record<string, string>)[status.toLowerCase()] || status; }
 function auditAction(action: string) { const key = action.toLowerCase().replace(/-/g, "_").replace(/^admin_/, ""); return ({ borrow: "เบิกยุทโธปกรณ์", return: "คืนยุทโธปกรณ์", return_transaction: "คืนยุทโธปกรณ์", delete_transaction_history: "ล้างประวัติเบิก / คืน", defect: "แจ้งยุทโธปกรณ์ชำรุด", report_defect: "แจ้งยุทโธปกรณ์ชำรุด", maintenance_status: "อัปเดตสถานะซ่อม", dispose_maintenance: "จำหน่ายยุทโธปกรณ์", transfer_inventory: "เคลื่อนย้ายยุทโธปกรณ์", save_user: "จัดการผู้ใช้งาน", delete_user: "ลบผู้ใช้งาน", delete_company: "ลบกองร้อย", save_equipment: "จัดการบัญชียุทโธปกรณ์", save_category: "จัดการหมวดหมู่ยุทโธปกรณ์", delete_equipment: "ลบชนิดยุทโธปกรณ์", delete_equipment_category: "ลบหมวดหมู่ยุทโธปกรณ์", save_inventory: "ปรับปรุงคลัง", batch_adjust_inventory: "ปรับจำนวนยุทโธปกรณ์หลายรายการ", add_inventory: "เพิ่มรายการเข้าคลัง", batch_add_inventory: "เพิ่มยุทโธปกรณ์หลายรายการเข้าคลัง", delete_inventory: "ลบรายการออกจากคลัง", save_company: "จัดการกองร้อย" } as Record<string, string>)[key] || action || "ไม่ระบุการดำเนินการ"; }
 function companyIcon(name: string) { const normalized = name.toLocaleLowerCase("th"); if (normalized.includes("ต่อสู้อากาศ")) return Shield; if (normalized.includes("สนับสนุน")) return LifeBuoy; if (normalized.includes("อากาศยาน")) return Plane; if (normalized.includes("รักษาการณ์")) return ShieldCheck; if (normalized.includes("ฝึก") || normalized.includes("ทหารใหม่")) return GraduationCap; return Building2; }
 

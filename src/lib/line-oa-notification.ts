@@ -84,6 +84,26 @@ async function sendToUsers(accessToken: string, userIds: string[], text: string)
   }
 }
 
+export async function sendLineAdminText(text: string): Promise<LineDeliveryResult> {
+  const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN?.trim();
+  if (!accessToken) return { sent: false, reason: "not-configured" };
+  try {
+    const recipients = await getLineNotificationRecipients();
+    const adminTargetId = process.env.LINE_ADMIN_TARGET_ID?.trim() || process.env.LINE_OA_TARGET_ID?.trim();
+    const adminUserIds = adminTargetId ? [] : recipients.filter((recipient) => recipient.role === "Admin").map((recipient) => recipient.lineUserId);
+    if (!adminTargetId && !adminUserIds.length) return { sent: false, reason: "no-linked-recipients" };
+    const safeText = text.slice(0, 4_900);
+    const deliveries: Promise<void>[] = [];
+    if (adminTargetId) deliveries.push(sendToTarget(accessToken, adminTargetId, safeText));
+    if (adminUserIds.length) deliveries.push(sendToUsers(accessToken, [...new Set(adminUserIds)], safeText));
+    await Promise.all(deliveries);
+    return { sent: true, recipientCount: adminUserIds.length + (adminTargetId ? 1 : 0) };
+  } catch (error) {
+    console.error("TEMS LINE admin delivery failed", error instanceof Error ? error.message : "unknown-error");
+    return { sent: false, reason: "delivery-error" };
+  }
+}
+
 export async function sendLineActivityNotification(notification: LineActivityNotification): Promise<LineDeliveryResult> {
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN?.trim();
   if (!accessToken) return { sent: false, reason: "not-configured" };

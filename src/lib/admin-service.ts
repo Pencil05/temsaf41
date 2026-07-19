@@ -7,6 +7,7 @@ import { hashPassword, verifyPassword } from "@/lib/password-utils";
 import { getEquipmentImage } from "@/lib/equipment-images";
 import { sendLineActivityNotification, type LineActivityNotification } from "@/lib/line-oa-notification";
 import { withSheetsMutationLock } from "@/lib/sheets-mutation-lock";
+import { prepareAdminUndoRecord } from "@/lib/admin-operations-service";
 
 type RecordRow = { rowNumber: number; record: Record<string, string> };
 type Table = { name: string; headers: string[]; rows: RecordRow[] };
@@ -672,7 +673,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       const currentStatus = field(row.record, "Status").toLowerCase();
       const nextStatus = String(input.status || "Reported");
       if (currentStatus === "completed" && nextStatus.toLowerCase() !== "completed") throw new Error("งานที่ซ่อมเสร็จแล้วไม่สามารถย้อนสถานะได้");
-      if (nextStatus.toLowerCase() === "completed" && currentStatus !== "completed") {
+      if (["completed", "rejected"].includes(nextStatus.toLowerCase()) && !["completed", "rejected"].includes(currentStatus)) {
         maintenance = withColumns(maintenance, ["Completed_At", "Completed_By_User_ID"], updates);
         const inventory = inventories.rows.find(({ record }) => field(record, "Inv_ID") === field(row.record, "Inv_ID"));
         if (!inventory) throw new Error("ไม่พบคลังเดิมของยุทโธปกรณ์ที่ซ่อม");
@@ -691,7 +692,7 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       if (notificationInventory) {
         const equipmentId = field(row.record, "Equip_ID") || field(notificationInventory.record, "Equip_ID");
         const companyId = field(notificationInventory.record, "Company_ID");
-        const statusLabel: Record<string, string> = { reported: "แจ้งเสีย", inspecting: "กำลังตรวจสอบ", inprogress: "กำลังดำเนินการ", completed: "ซ่อมเสร็จแล้ว", disposed: "จำหน่ายแล้ว" };
+        const statusLabel: Record<string, string> = { reported: "แจ้งเสีย", inspecting: "กำลังตรวจสอบ", inprogress: "กำลังดำเนินการ", completed: "ซ่อมเสร็จแล้ว", rejected: "ไม่รับรายการแจ้งเสีย", disposed: "จำหน่ายแล้ว" };
         lineNotification = { kind: "defect", actorName: [admin.rank, admin.firstName, admin.lastName].filter(Boolean).join(" ") || admin.email, ownerCompanyId: companyId, ownerCompanyName: field(companies.rows.find(({ record }) => field(record, "Company_ID") === companyId)?.record || {}, "Company_Name") || companyId, referenceId: target, occurredAt: new Date().toISOString(), note: `อัปเดตสถานะซ่อม: ${statusLabel[nextStatus.toLowerCase().replace(/[\s_-]/g, "")] || nextStatus}`, items: [{ name: field(equipments.rows.find(({ record }) => field(record, "Equip_ID") === equipmentId)?.record || {}, "Equip_Name") || "ไม่ระบุชื่อยุทโธปกรณ์", quantity: number(row.record, "Qty"), plateNumber: field(notificationInventory.record, "Plate_Number") }] };
       }
     } else if (action === "dispose-maintenance") {
@@ -715,6 +716,8 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
 
     const safeDetails = { ...Object.fromEntries(Object.entries(input).filter(([key]) => !key.toLowerCase().includes("password"))), ...auditContext };
     updates.push(append(logs, valuesFor(logs, { Log_ID: `LOG-${randomUUID()}`, User_ID: admin.userId, Action_Type: `ADMIN_${action.toUpperCase().replace(/-/g, "_")}`, Target_ID: target, Timestamp: new Date().toISOString(), Details: JSON.stringify(safeDetails) })));
+    const undoRecord = await prepareAdminUndoRecord(admin, action, target, updates, rangesToClear);
+    if (undoRecord) updates.push(undoRecord.update);
     await clearRanges(rangesToClear);
     await write(updates);
     if (!lineNotification) {
@@ -727,6 +730,6 @@ export async function adminMutation(admin: SessionUser, input: Record<string, un
       lineNotification = { kind: "admin", actorName: [admin.rank, admin.firstName, admin.lastName].filter(Boolean).join(" ") || admin.email, ownerCompanyName: auditContext.companyName || "ส่วนกลาง", referenceId: target, occurredAt: new Date().toISOString(), note: actionLabels[action] || action, adminOnly: true, items: auditContext.equipmentName ? [{ name: auditContext.equipmentName, quantity: Number(auditContext.quantity) || 1, plateNumber: auditContext.plateNumber }] : [] };
     }
     if (lineNotification) await sendLineActivityNotification(lineNotification);
-    return { success: true, id: target };
+    return { success: true, id: target, undoId: undoRecord?.id || null };
   });
 }
