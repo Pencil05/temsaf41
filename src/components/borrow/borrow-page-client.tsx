@@ -8,7 +8,7 @@ import {
   Download,
   FileImage,
   FileText,
-  Heart,
+  Star,
   Hash,
   PackageCheck,
   Search,
@@ -397,7 +397,7 @@ export function BorrowPageClient({ data }: { data: BorrowPageData }) {
                           : "border-slate-200 hover:border-blue-200"
                       }`}
                     >
-                      <button type="button" onClick={() => toggleFavorite(item.name)} className={`absolute right-12 top-3 z-10 grid size-9 place-items-center rounded-xl transition ${favorites.includes(item.name) ? "bg-pink-100 text-pink-600" : "bg-slate-100 text-slate-400 hover:text-pink-500"}`} aria-label={favorites.includes(item.name) ? "นำออกจากรายการโปรด" : "เพิ่มเป็นรายการโปรด"}><Heart className="size-4" fill={favorites.includes(item.name) ? "currentColor" : "none"} /></button>
+                      <button type="button" onClick={() => toggleFavorite(item.name)} className={`absolute right-12 top-3 z-10 grid size-9 place-items-center rounded-xl transition ${favorites.includes(item.name) ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-400 hover:text-amber-500"}`} aria-label={favorites.includes(item.name) ? "นำออกจากรายการโปรด" : "เพิ่มเป็นรายการโปรด"}><Star className="size-4" fill={favorites.includes(item.name) ? "currentColor" : "none"} /></button>
                       <button
                         type="button"
                         onClick={() => toggleItem(item)}
