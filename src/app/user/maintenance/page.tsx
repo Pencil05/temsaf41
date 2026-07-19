@@ -25,7 +25,7 @@ export default async function UserMaintenancePage({ searchParams }: { searchPara
           <div className="mt-5 flex items-center gap-4"><span className="grid size-12 place-items-center rounded-2xl bg-white/15"><Wrench className="size-6" /></span><div><p className="text-sm text-orange-100">Maintenance Center</p><h1 className="text-2xl font-bold">ยุทโธปกรณ์ชำรุด</h1><p className="mt-1 text-sm text-orange-100">ติดตามสถานะและเปิดดูประวัติการแจ้งซ่อม</p></div></div>
         </header>
 
-        <DashboardActions data={actions} showReturn={false} />
+        <DashboardActions data={actions} showBorrow={false} showReturn={false} />
 
         <div className="mt-6"><div><p className="text-sm font-semibold text-orange-600">ประวัติทั้งหมด</p><h2 className="text-xl font-bold text-slate-900">รายการแจ้งเสียและผลการซ่อม</h2></div><HistoryClient items={history} initialTx={tx} statusColumnLabel="สถานะ" /></div>
       </div>

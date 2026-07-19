@@ -17,7 +17,7 @@ import type { DashboardActionData } from "@/lib/inventory-action-service";
 
 type Mode = "return" | "defect" | null;
 
-export function DashboardActions({ data, initialMode = null, showReturn = true }: { data: DashboardActionData; initialMode?: Mode; showReturn?: boolean }) {
+export function DashboardActions({ data, initialMode = null, showBorrow = true, showReturn = true }: { data: DashboardActionData; initialMode?: Mode; showBorrow?: boolean; showReturn?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -270,12 +270,12 @@ export function DashboardActions({ data, initialMode = null, showReturn = true }
         </div>
       )}
 
-      <section className={`mt-6 grid gap-3 ${showReturn ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"}`}>
-        <Link href="/user/borrow" className="group rounded-[22px] border border-blue-100 bg-white p-4 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:border-blue-300">
+      <section className={`mt-6 grid gap-3 ${showBorrow && showReturn ? "grid-cols-1 sm:grid-cols-3" : showBorrow || showReturn ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
+        {showBorrow && <Link href="/user/borrow" className="group rounded-[22px] border border-blue-100 bg-white p-4 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:border-blue-300">
           <span className="grid size-11 place-items-center rounded-2xl bg-blue-100 text-blue-600 transition group-hover:bg-blue-600 group-hover:text-white group-active:bg-blue-600 group-active:text-white"><PackagePlus className="size-5" /></span>
           <span className="mt-3 block font-bold text-slate-800">เบิกยุทโธปกรณ์</span>
           <span className="mt-1 block text-xs text-slate-500">เลือกเบิกได้หลายรายการ</span>
-        </Link>
+        </Link>}
         <button
           onClick={openDefect}
           className="group rounded-[22px] border border-orange-100 bg-white p-4 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:border-orange-200"
