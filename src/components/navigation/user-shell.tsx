@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, History, Home, ListTodo, LogOut, Menu, PackageSearch, RefreshCw, RotateCcw, Search, Settings, UserRound, Wrench, X } from "lucide-react";
+import { Boxes, History, Home, ListTodo, LogOut, Menu, PackageSearch, PanelLeftClose, PanelLeftOpen, RefreshCw, RotateCcw, Search, Settings, UserRound, Wrench, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -27,6 +27,7 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedResult, setSelectedResult] = useState(0);
@@ -96,6 +97,10 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
 
   function refreshPage() {
     startRefresh(() => router.refresh());
+  }
+
+  function toggleDesktopSidebar() {
+    setSidebarCollapsed((current) => !current);
   }
 
   const navigation = (
@@ -175,12 +180,12 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
   );
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen overflow-x-hidden bg-slate-50">
       {(navigating || isRefreshing) && (
         <ActionLoadingOverlay message={isRefreshing ? "กำลังรีเฟรชข้อมูลล่าสุด..." : "กำลังโหลดหน้าและข้อมูลล่าสุด..."} />
       )}
 
-      <aside className="fixed inset-y-0 left-0 z-50 hidden w-72 border-r border-slate-200 bg-white lg:block">{navigation}</aside>
+      <aside className={`fixed inset-y-0 left-0 z-50 hidden w-72 border-r border-slate-200 bg-white transition-transform duration-300 ease-out lg:block ${sidebarCollapsed ? "-translate-x-full" : "translate-x-0"}`}>{navigation}</aside>
 
       <div
         className={`fixed inset-0 z-[90] bg-slate-950/45 backdrop-blur-sm transition-opacity duration-300 ease-out lg:hidden ${
@@ -199,9 +204,9 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
         </aside>
       </div>
 
-      <div className="lg:pl-72">
+      <div className={`transition-[padding] duration-300 ease-out ${sidebarCollapsed ? "lg:pl-0" : "lg:pl-72"}`}>
         <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-xl sm:px-6">
-          <div className="mx-auto flex max-w-5xl items-center gap-3 lg:max-w-7xl">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 lg:max-w-7xl">
             <button
               onClick={() => setOpen(true)}
               className="grid size-10 shrink-0 place-items-center rounded-xl border border-slate-300 bg-white text-blue-700 shadow-sm hover:border-blue-300 hover:bg-blue-50 active:bg-blue-100 lg:hidden"
@@ -210,7 +215,17 @@ export function UserShell({ profile, searchItems, children }: { profile: Account
               <Menu className="size-5" strokeWidth={2.25} />
             </button>
 
-            <div ref={searchBoxRef} className="relative flex-1" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
+            <button
+              type="button"
+              onClick={toggleDesktopSidebar}
+              className="hidden size-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 active:scale-95 lg:grid"
+              aria-label={sidebarCollapsed ? "แสดงแถบเมนูด้านซ้าย" : "ซ่อนแถบเมนูด้านซ้าย"}
+              title={sidebarCollapsed ? "แสดงแถบเมนู" : "ซ่อนแถบเมนู"}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}
+            </button>
+
+            <div ref={searchBoxRef} className="relative order-last min-w-0 basis-full sm:order-none sm:flex-1 sm:basis-auto" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={query}

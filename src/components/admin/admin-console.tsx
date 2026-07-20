@@ -40,6 +40,8 @@ import {
   LogOut,
   Menu,
   PackagePlus,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   RotateCcw,
   Search,
@@ -143,6 +145,7 @@ export function AdminConsole({ initialData, initialOperations, adminName }: { in
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [menu, setMenu] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [refreshing, startRefresh] = useTransition();
   const keyword = query.trim().toLowerCase();
   const match = useCallback((...values: unknown[]) => !keyword || values.join(" ").toLowerCase().includes(keyword), [keyword]);
@@ -171,6 +174,9 @@ export function AdminConsole({ initialData, initialOperations, adminName }: { in
     return new Set([...selectedInventoryIds].filter((id) => visibleIds.has(id)));
   }, [filtered.inventories, selectedInventoryIds]);
   useEffect(() => { if (!message) return; const timeout = window.setTimeout(() => setMessage(""), 3000); return () => window.clearTimeout(timeout); }, [message]);
+  function toggleDesktopSidebar() {
+    setSidebarCollapsed((current) => !current);
+  }
 
   async function mutate(payload: Record<string, unknown>) {
     setSaving(true);
@@ -223,15 +229,16 @@ export function AdminConsole({ initialData, initialOperations, adminName }: { in
   );
 
   return (
-    <div className="admin-shell min-h-screen bg-slate-50 text-slate-900">
+    <div className="admin-shell min-h-screen overflow-x-hidden bg-slate-50 text-slate-900">
       {(saving || refreshing) && <ActionLoadingOverlay message={saving ? "กำลังบันทึกและสร้าง Audit Log..." : "กำลังโหลดข้อมูลล่าสุด..."} />}
-      <aside className="fixed inset-y-0 left-0 hidden w-72 flex-col border-r border-slate-200 bg-white lg:flex">{navigation}</aside>
+      <aside className={`fixed inset-y-0 left-0 hidden w-72 flex-col border-r border-slate-200 bg-white transition-transform duration-300 ease-out lg:flex ${sidebarCollapsed ? "-translate-x-full" : "translate-x-0"}`}>{navigation}</aside>
       {menu && <div className="fixed inset-0 z-50 bg-slate-950/45 lg:hidden" onClick={() => setMenu(false)}><aside className="popup-panel flex h-full w-[84%] max-w-xs flex-col bg-white" onClick={(event) => event.stopPropagation()}>{navigation}</aside></div>}
 
-      <div className="lg:pl-72">
-        <header className="sticky top-0 z-40 flex items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur-xl">
+      <div className={`transition-[padding] duration-300 ease-out ${sidebarCollapsed ? "lg:pl-0" : "lg:pl-72"}`}>
+        <header className="sticky top-0 z-40 flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur-xl">
           <button type="button" onClick={() => setMenu(true)} className="grid size-10 place-items-center rounded-xl border border-slate-300 lg:hidden"><Menu className="size-5" /></button>
-          <div className="relative flex-1">
+          <button type="button" onClick={toggleDesktopSidebar} className="hidden size-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 active:scale-95 lg:grid" aria-label={sidebarCollapsed ? "แสดงแถบเมนูด้านซ้าย" : "ซ่อนแถบเมนูด้านซ้าย"} title={sidebarCollapsed ? "แสดงแถบเมนู" : "ซ่อนแถบเมนู"}>{sidebarCollapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}</button>
+          <div className="relative order-last min-w-0 basis-full sm:order-none sm:flex-1 sm:basis-auto">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ค้นหาผู้ใช้ กองร้อย ยุทโธปกรณ์ เลขที่เอกสาร หรือ Log..." className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-10 text-sm outline-none focus:border-blue-500" />{query && <button type="button" onClick={() => setQuery("")} className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:bg-slate-200" aria-label="ล้างคำค้นหา"><X className="size-4" /></button>}
           </div>
